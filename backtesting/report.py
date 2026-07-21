@@ -37,14 +37,14 @@ class BacktestReport:
     # Computed metrics
     total_trades: int = 0
     winning_trades: int = 0  # trades with positive P&L
-    losing_trades: int = 0   # trades with negative or zero P&L
+    losing_trades: int = 0   # trades with negative P&L (flat trades are neither)
     win_rate: float = 0.0    # winning_trades / total_trades
     correct_predictions: int = 0   # direction prediction matched actual
     prediction_accuracy: float = 0.0  # correct_predictions / total_trades
     cumulative_return: float = 0.0
     max_drawdown: float = 0.0
-    sharpe_ratio: float = 0.0
-    profit_factor: float = 0.0
+    sharpe_ratio: float | None = None   # None = too few trades to estimate
+    profit_factor: float | None = None  # None = no losing trades
     exposure_pct: float = 0.0
     benchmark_return: float | None = None  # buy-and-hold return over same period
 

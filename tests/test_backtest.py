@@ -170,7 +170,7 @@ class TestComputeMetrics:
         assert result.win_rate == 1.0
         assert result.cumulative_return > 0
         assert result.max_drawdown == 0.0
-        assert result.profit_factor == float("inf")
+        assert result.profit_factor is None  # no losing trades
 
     def test_all_losing(self):
         trades = [self._make_trade(-0.03, correct=False) for _ in range(5)]
@@ -213,7 +213,7 @@ class TestComputeMetrics:
         # Equity curve has n_trades + 1 points (initial + after each trade)
         assert len(result.equity_curve) == 4
 
-    def test_sharpe_ratio_calculated(self):
+    def test_sharpe_suppressed_below_min_trades(self):
         trades = [
             self._make_trade(0.05),
             self._make_trade(-0.02, correct=False),
@@ -224,15 +224,33 @@ class TestComputeMetrics:
             initial_capital=10000, trades=trades,
         )
         result = compute_metrics(report)
-        # With mixed returns and >1 trade, Sharpe should be non-zero
-        assert result.sharpe_ratio != 0.0
+        # 3 trades is far too few for a meaningful Sharpe estimate
+        assert result.sharpe_ratio is None
 
-    def test_crypto_sharpe_uses_365(self):
-        trades = [self._make_trade(0.05), self._make_trade(0.03)]
+    def test_sharpe_calculated_with_enough_trades(self):
+        trades = [
+            self._make_trade(0.05 if i % 2 == 0 else -0.02, correct=(i % 2 == 0))
+            for i in range(12)
+        ]
         report = BacktestReport(
-            ticker="BTC-USD", period="1y", horizon_days=5,
-            initial_capital=10000, trades=trades, is_crypto=True,
+            ticker="T", period="1y", horizon_days=5,
+            initial_capital=10000, trades=trades,
         )
         result = compute_metrics(report)
-        # Should compute without error using 365 trading days
         assert isinstance(result.sharpe_ratio, float)
+        assert result.sharpe_ratio != 0.0
+
+    def test_flat_trades_are_neither_wins_nor_losses(self):
+        trades = [
+            self._make_trade(0.05),
+            self._make_trade(0.0),
+            self._make_trade(-0.02, correct=False),
+        ]
+        report = BacktestReport(
+            ticker="T", period="1y", horizon_days=5,
+            initial_capital=10000, trades=trades,
+        )
+        result = compute_metrics(report)
+        assert result.winning_trades == 1
+        assert result.losing_trades == 1
+        assert result.total_trades == 3

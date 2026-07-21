@@ -223,3 +223,7 @@ WATCHLIST_PRESETS = {
     "Indices": ["^GSPC", "^DJI", "^IXIC", "^RUT"],
     "Custom": [],
 }
+
+# Backtest metrics
+RISK_FREE_RATE_ANNUAL = 0.04   # annual risk-free rate subtracted in Sharpe
+MIN_TRADES_FOR_SHARPE = 10     # below this, Sharpe is reported as n/a

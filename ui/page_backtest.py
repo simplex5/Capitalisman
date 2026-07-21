@@ -5,7 +5,11 @@ import streamlit as st
 
 from backtesting.engine import run_backtest
 from charts.factory import render_equity_curve, render_price_chart
-from config.settings import BACKTEST_FETCH_PERIOD
+from config.settings import (
+    BACKTEST_FETCH_PERIOD,
+    MIN_TRADES_FOR_SHARPE,
+    RISK_FREE_RATE_ANNUAL,
+)
 from data.fetcher import (
     compute_open_to_close_return,
     fetch_ohlcv,
@@ -136,7 +140,10 @@ def render():
     st.caption(
         f"Evaluation: {first_entry:%Y-%m-%d} to {last_exit:%Y-%m-%d}. "
         f"Signals use closing data and enter at the next bar's open; exits use the close "
-        f"after {horizon} bars. Short positions are modeled without borrow costs."
+        f"after {horizon} bars. Short positions are modeled without borrow costs. "
+        f"Strategy return compounds in-market trades only "
+        f"(exposure {report.exposure_pct:.0%}); buy-and-hold comparisons are fully "
+        f"invested for the whole window, so the two are not directly comparable."
     )
 
     # Compute benchmark/buy-and-hold returns for context
@@ -163,8 +170,14 @@ def render():
     m5.metric("Max Drawdown", f"{report.max_drawdown:.1%}")
 
     m6, m7, m8 = st.columns(3)
-    pf_display = "No losses" if report.profit_factor == float("inf") else f"{report.profit_factor:.2f}"
-    m6.metric("Sharpe Ratio", f"{report.sharpe_ratio:.2f}")
+    pf_display = "No losses" if report.profit_factor is None else f"{report.profit_factor:.2f}"
+    sharpe_display = "n/a" if report.sharpe_ratio is None else f"{report.sharpe_ratio:.2f}"
+    m6.metric(
+        "Sharpe Ratio",
+        sharpe_display,
+        help=f"Annualized excess return over a {RISK_FREE_RATE_ANNUAL:.0%} risk-free rate; "
+             f"needs at least {MIN_TRADES_FOR_SHARPE} trades to be meaningful.",
+    )
     m7.metric("Profit Factor", pf_display)
     m8.metric(
         "Time in Market",
