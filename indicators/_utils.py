@@ -4,13 +4,16 @@ Provides cached reference data fetching and date-index alignment for
 indicators that need data from other tickers (e.g., copper, gold, VIX).
 """
 
+import time
+
 import numpy as np
 import pandas as pd
 
-# Module-level cache survives across calls within the same process.
-# For Streamlit apps this means the reference data is fetched once per
-# server lifetime, which is fine for slow-moving macro data.
-_reference_cache: dict[str, "pd.Series | None"] = {}
+# Module-level cache survives across calls within the same process, with a
+# TTL so a long-running Streamlit server does not serve days-old macro data
+# as current (the old "once per server lifetime" behavior).
+_REFERENCE_TTL_SECONDS = 3600.0
+_reference_cache: dict[str, tuple[float, "pd.Series | None"]] = {}
 
 
 def fetch_reference_close(ticker: str, period: str = "2y") -> "pd.Series | None":
@@ -25,19 +28,20 @@ def fetch_reference_close(ticker: str, period: str = "2y") -> "pd.Series | None"
     Returns None on any failure (network, invalid ticker, etc.).
     """
     cache_key = f"{ticker}_{period}"
-    if cache_key in _reference_cache:
-        return _reference_cache[cache_key]
+    cached = _reference_cache.get(cache_key)
+    if cached is not None and time.time() - cached[0] < _REFERENCE_TTL_SECONDS:
+        return cached[1]
     try:
         import yfinance as yf
 
         df = yf.Ticker(ticker).history(period=period, auto_adjust=False)
         if df is not None and not df.empty and "Close" in df.columns:
             result = df["Close"]
-            _reference_cache[cache_key] = result
+            _reference_cache[cache_key] = (time.time(), result)
             return result
     except Exception:
         pass
-    _reference_cache[cache_key] = None
+    _reference_cache[cache_key] = (time.time(), None)
     return None
 
 

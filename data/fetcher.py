@@ -76,10 +76,39 @@ def _validate_ohlcv(df: Optional[pd.DataFrame], ticker: str) -> pd.DataFrame:
     df = df[expected_cols].copy()
     df.dropna(inplace=True)
 
+    # Defensive index/price hygiene: providers occasionally return unsorted or
+    # duplicated timestamps and zero-priced placeholder rows, which silently
+    # distort indicator windows downstream.
+    if not df.index.is_monotonic_increasing:
+        df.sort_index(inplace=True)
+    if df.index.has_duplicates:
+        df = df[~df.index.duplicated(keep="last")]
+    df = df[df["Close"] > 0]
+
     if len(df) < 2:
         raise ValueError(f"Insufficient data for '{ticker}' (got {len(df)} rows).")
 
     return df
+
+
+_INTERVAL_STALENESS_DAYS = {"1d": 4, "1wk": 10, "1mo": 45}
+
+
+def staleness_note(df: Optional[pd.DataFrame], interval: str = "1d") -> Optional[str]:
+    """Return an "as of" warning when the last bar is older than expected.
+
+    A 1d series may legitimately lag up to a long weekend; beyond the
+    per-interval allowance the price should not be presented as current
+    (halted, delisted, or stale-cache data).
+    """
+    if df is None or len(df) == 0:
+        return None
+    last_ts = pd.Timestamp(df.index[-1])
+    now = pd.Timestamp.now(tz=last_ts.tz) if last_ts.tz is not None else pd.Timestamp.now()
+    age_days = (now - last_ts).days
+    if age_days > _INTERVAL_STALENESS_DAYS.get(interval, 4):
+        return f"Data as of {last_ts.date()} ({age_days} days old) — not a live price."
+    return None
 
 
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)

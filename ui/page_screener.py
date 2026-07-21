@@ -3,7 +3,8 @@
 import streamlit as st
 
 from config.settings import WATCHLIST_PRESETS
-from data.fetcher import TransientFetchError, fetch_ohlcv_batch
+from data.fetcher import TransientFetchError, fetch_ohlcv_batch, staleness_note
+from ui.components import check_data_sufficiency
 from data.watchlists import delete_watchlist, load_watchlists, save_watchlist
 from indicators.registry import get_all_indicators
 from signals.base import SignalDirection
@@ -99,15 +100,37 @@ def render():
         results = []
         progress = st.progress(0, text="Fetching price data...")
 
+        # Size the fetch window to the heaviest selected indicator so
+        # long-lookback indicators don't silently abstain on 6 months of data.
+        max_lookback = max((ind.lookback for ind in chosen.values()), default=0)
+        fetch_period = "2y" if max_lookback + 50 > 120 else "6mo"
+
         # One batched download instead of two serial requests per ticker —
         # avoids Yahoo rate-limit throttling mid-scan (CMAN-D1-004).
         try:
-            frames, fetch_errors = fetch_ohlcv_batch(tuple(tickers), period="6mo")
+            frames, fetch_errors = fetch_ohlcv_batch(tuple(tickers), period=fetch_period)
         except TransientFetchError as error:
             progress.empty()
             st.error(str(error))
             return
         failures = [f"{t}: {msg}" for t, msg in fetch_errors.items()]
+
+        insufficient = set()
+        stale_tickers = []
+        for ticker, frame in frames.items():
+            insufficient.update(check_data_sufficiency(len(frame), selected_indicators))
+            if staleness_note(frame):
+                stale_tickers.append(ticker)
+        if insufficient:
+            st.warning(
+                "Some indicators lack enough bars and will abstain: "
+                + "; ".join(sorted(insufficient))
+            )
+        if stale_tickers:
+            st.warning(
+                "Last bar is not recent for: " + ", ".join(stale_tickers)
+                + " — prices shown are not live."
+            )
 
         for i, ticker in enumerate(tickers):
             progress.progress((i + 1) / len(tickers), text=f"Scanning {ticker}...")

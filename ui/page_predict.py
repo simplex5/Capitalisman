@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from charts.factory import render_price_chart
-from data.fetcher import fetch_with_warmup
+from data.fetcher import fetch_with_warmup, staleness_note
 from indicators.registry import get_all_indicators
 from signals.base import SignalDirection
 from signals.combiner import combine_signals
@@ -218,6 +218,10 @@ def render():
     except Exception as e:
         st.error(f"Unexpected error fetching data: {e}")
         return
+
+    stale = staleness_note(display_df)
+    if stale:
+        st.warning(stale)
 
     try:
         # Check data sufficiency against full (warmup) data

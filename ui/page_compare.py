@@ -6,7 +6,12 @@ import numpy as np
 import streamlit as st
 
 from charts.plotly_fallback import create_comparison_chart
-from data.fetcher import compute_buy_and_hold, fetch_with_warmup, get_asset_info
+from data.fetcher import (
+    compute_buy_and_hold,
+    fetch_with_warmup,
+    get_asset_info,
+    staleness_note,
+)
 from indicators.registry import get_all_indicators
 from signals.base import SignalDirection
 from signals.combiner import combine_signals
@@ -90,6 +95,9 @@ def render():
     except ValueError as e:
         st.error(f"{ticker_a}: {e}")
         return
+    except Exception as e:
+        st.error(f"{ticker_a}: unexpected error fetching data: {e}")
+        return
 
     try:
         with st.spinner(f"Fetching {ticker_b}..."):
@@ -97,6 +105,14 @@ def render():
     except ValueError as e:
         st.error(f"{ticker_b}: {e}")
         return
+    except Exception as e:
+        st.error(f"{ticker_b}: unexpected error fetching data: {e}")
+        return
+
+    for label, frame in ((ticker_a, display_a), (ticker_b, display_b)):
+        stale = staleness_note(frame)
+        if stale:
+            st.warning(f"{label}: {stale}")
 
     # Asset info
     info_a = get_asset_info(ticker_a)

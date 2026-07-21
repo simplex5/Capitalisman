@@ -13,10 +13,12 @@ from data.fetcher import (
     _call_with_retry,
     compute_buy_and_hold,
     compute_open_to_close_return,
+    _validate_ohlcv,
     fetch_ohlcv,
     fetch_ohlcv_batch,
     is_crypto_ticker,
     search_tickers,
+    staleness_note,
     slice_date_range,
     trim_to_period,
 )
@@ -152,6 +154,44 @@ class TestFetchBatch:
         monkeypatch.setattr("data.fetcher.time.sleep", lambda _: None)
         with pytest.raises(TransientFetchError):
             fetch_ohlcv_batch(("THROTTLED",), period="3mo")
+
+
+class TestValidateOhlcvHygiene:
+    def test_duplicate_timestamps_deduped_keep_last(self):
+        df = _ohlcv_frame(periods=5)
+        dup = pd.concat([df, df.iloc[[-1]] * 2.0])
+        result = _validate_ohlcv(dup, "DUPT")
+        assert not result.index.has_duplicates
+        assert result["Close"].iloc[-1] == 2.0
+
+    def test_unsorted_index_is_sorted(self):
+        df = _ohlcv_frame(periods=5).iloc[::-1]
+        result = _validate_ohlcv(df, "SORTT")
+        assert result.index.is_monotonic_increasing
+
+    def test_nonpositive_prices_dropped(self):
+        df = _ohlcv_frame(periods=5)
+        df.iloc[2, df.columns.get_loc("Close")] = 0.0
+        result = _validate_ohlcv(df, "ZEROT")
+        assert len(result) == 4
+        assert (result["Close"] > 0).all()
+
+
+class TestStalenessNote:
+    def test_fresh_daily_data_has_no_note(self):
+        index = pd.date_range(end=pd.Timestamp.now().normalize(), periods=5, freq="D")
+        df = pd.DataFrame({"Close": [1.0] * 5}, index=index)
+        assert staleness_note(df) is None
+
+    def test_old_last_bar_produces_note(self):
+        index = pd.date_range(end=pd.Timestamp.now() - pd.Timedelta(days=30), periods=5, freq="D")
+        df = pd.DataFrame({"Close": [1.0] * 5}, index=index)
+        note = staleness_note(df)
+        assert note is not None and "not a live price" in note
+
+    def test_empty_frame_returns_none(self):
+        assert staleness_note(None) is None
+        assert staleness_note(pd.DataFrame()) is None
 
 
 class TestSearchTickers:
