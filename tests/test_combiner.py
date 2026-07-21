@@ -2,10 +2,41 @@
 
 import pytest
 
+from indicators.base import BaseIndicator
 from indicators.registry import get_all_indicators
-from signals.base import CombinedSignal, SignalDirection
+from signals.base import CombinedSignal, SignalDirection, SignalResult
 from signals.combiner import _get_timescale, combine_signals
 from tests.conftest import make_ohlcv
+
+
+class _FixedSignalIndicator(BaseIndicator):
+    """Test double that always emits one fixed signal."""
+
+    def __init__(self, name, direction, strength):
+        self._name = name
+        self._direction = direction
+        self._strength = strength
+
+    @property
+    def name(self):
+        return self._name
+
+    @property
+    def category(self):
+        return "trend"
+
+    @property
+    def lookback(self):
+        return 1
+
+    def compute(self, df):
+        return df
+
+    def get_signal(self, df, idx=-1):
+        return SignalResult(self._name, self._direction, self._strength, "fixed")
+
+    def get_chart_config(self):
+        return {}
 
 
 class TestGetTimescale:
@@ -80,6 +111,29 @@ class TestCombineSignals:
         result = combine_signals({}, df, horizon_days=5)
         assert result.direction == SignalDirection.HOLD
         assert result.confidence == 0.0
+
+    def test_confidence_penalizes_broad_abstention(self):
+        """One weak voter among many abstainers must not read as ~100%."""
+        indicators = {"buyer": _FixedSignalIndicator("buyer", SignalDirection.BUY, 0.3)}
+        indicators.update({
+            f"hold{i}": _FixedSignalIndicator(f"hold{i}", SignalDirection.HOLD, 0.0)
+            for i in range(9)
+        })
+        df = make_ohlcv(50, trend="flat")
+        result = combine_signals(indicators, df, horizon_days=5, precomputed=True)
+        assert result.direction == SignalDirection.BUY
+        # 0.3 conviction out of 10 equally-weighted possible votes
+        assert result.confidence == pytest.approx(0.03)
+
+    def test_unanimous_full_strength_reads_high(self):
+        indicators = {
+            f"b{i}": _FixedSignalIndicator(f"b{i}", SignalDirection.BUY, 1.0)
+            for i in range(10)
+        }
+        df = make_ohlcv(50, trend="flat")
+        result = combine_signals(indicators, df, horizon_days=5, precomputed=True)
+        assert result.direction == SignalDirection.BUY
+        assert result.confidence == pytest.approx(1.0)
 
     def test_single_indicator(self):
         from indicators.momentum import RSI

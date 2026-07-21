@@ -120,6 +120,14 @@ def combine_signals(
     sell_score = direction_scores["SELL"]
     directional_total = buy_score + sell_score
 
+    # Maximum possible weighted conviction: every indicator voting one way at
+    # full strength. Confidence normalizes against this rather than the
+    # directional votes alone, so broad abstention lowers the score — one weak
+    # voter among many silent indicators must not read as near-100% agreement.
+    total_possible = sum(
+        _get_adjusted_weight(name, horizon_days) for name in indicators
+    )
+
     if directional_total == 0:
         return CombinedSignal(
             direction=SignalDirection.HOLD,
@@ -140,7 +148,7 @@ def combine_signals(
         direction = SignalDirection.HOLD
     else:
         direction = SignalDirection(top_dir)
-        confidence = top_score / directional_total
+        confidence = top_score / total_possible if total_possible > 0 else 0.0
 
     reasoning = _build_reasoning(direction, confidence, individual_signals, buy_score, sell_score)
 

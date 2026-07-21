@@ -23,7 +23,7 @@ Pick a ticker (like `AAPL` for Apple, or `BTC-USD` for Bitcoin) and a time horiz
 - **SELL** — indicators suggest the price is likely to go down
 - **HOLD** — signals are mixed or too close to call
 
-Each prediction comes with a **directional-agreement score** (0–100%) showing how much of the actionable weighted vote supports the winning direction. It is not a calibrated probability that the prediction will be correct.
+Each prediction comes with a **directional-agreement score** (0–100%) showing how much of the total possible weighted vote supports the winning direction — indicators that abstain (HOLD) lower the score. It is not a calibrated probability that the prediction will be correct.
 
 **Multi-Timeframe Signals** — Above the primary signal card, three compact cards show the signal for 1-day, 5-day, and 20-day horizons simultaneously, so you can see whether short-term and long-term outlooks agree at a glance.
 
