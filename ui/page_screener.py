@@ -3,7 +3,7 @@
 import streamlit as st
 
 from config.settings import WATCHLIST_PRESETS
-from data.fetcher import fetch_ohlcv, get_asset_info
+from data.fetcher import TransientFetchError, fetch_ohlcv_batch
 from data.watchlists import delete_watchlist, load_watchlists, save_watchlist
 from indicators.registry import get_all_indicators
 from signals.base import SignalDirection
@@ -97,27 +97,36 @@ def render():
         chosen = {n: all_indicators[n] for n in selected_indicators if n in all_indicators}
 
         results = []
-        failures = []
-        progress = st.progress(0, text="Scanning...")
+        progress = st.progress(0, text="Fetching price data...")
+
+        # One batched download instead of two serial requests per ticker —
+        # avoids Yahoo rate-limit throttling mid-scan (CMAN-D1-004).
+        try:
+            frames, fetch_errors = fetch_ohlcv_batch(tuple(tickers), period="6mo")
+        except TransientFetchError as error:
+            progress.empty()
+            st.error(str(error))
+            return
+        failures = [f"{t}: {msg}" for t, msg in fetch_errors.items()]
 
         for i, ticker in enumerate(tickers):
             progress.progress((i + 1) / len(tickers), text=f"Scanning {ticker}...")
+            df = frames.get(ticker)
+            if df is None:
+                continue
             try:
-                df = fetch_ohlcv(ticker, period="6mo")
                 computed = df.copy()
                 for indicator in chosen.values():
                     computed = indicator.compute_for_horizon(computed, horizon)
                 signal = combine_signals(chosen, computed, horizon_days=horizon, precomputed=True)
 
-                info = get_asset_info(ticker)
-                name = info["name"] if info else ticker
                 price = df["Close"].iloc[-1]
                 prev_close = df["Close"].iloc[-2] if len(df) > 1 else price
                 change_pct = (price - prev_close) / prev_close * 100
 
                 results.append({
                     "ticker": ticker,
-                    "name": name,
+                    "name": ticker,
                     "price": price,
                     "change_pct": change_pct,
                     "direction": signal.direction,
@@ -182,7 +191,10 @@ def render():
         )
 
         with col_ticker:
-            st.markdown(f"**{r['ticker']}**  \n{r['name']}")
+            label = f"**{r['ticker']}**"
+            if r["name"] and r["name"] != r["ticker"]:
+                label += f"  \n{r['name']}"
+            st.markdown(label)
 
         with col_price:
             st.markdown(

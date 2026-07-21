@@ -47,6 +47,12 @@ def render():
     with st.spinner("Searching..."):
         results = search_tickers(query)
 
+    if results is None:
+        st.error(
+            "Search is temporarily unavailable (network or rate limit). "
+            "Try again in a minute."
+        )
+        return
     if not results:
         st.warning(f"No results found for '{query}'.")
         return

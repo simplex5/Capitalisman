@@ -9,13 +9,25 @@ import pandas as pd
 import pytest
 
 from data.fetcher import (
+    TransientFetchError,
+    _call_with_retry,
     compute_buy_and_hold,
     compute_open_to_close_return,
     fetch_ohlcv,
+    fetch_ohlcv_batch,
     is_crypto_ticker,
+    search_tickers,
     slice_date_range,
     trim_to_period,
 )
+
+
+def _ohlcv_frame(periods=5, value=1.0):
+    index = pd.date_range("2024-01-01", periods=periods, freq="D")
+    return pd.DataFrame(
+        {col: [value] * periods for col in ["Open", "High", "Low", "Close", "Volume"]},
+        index=index,
+    )
 
 
 class TestIsCryptoTicker:
@@ -74,6 +86,84 @@ class TestOpenToCloseReturn:
     def test_uses_first_open_and_last_close(self):
         df = pd.DataFrame({"Open": [90.0, 105.0], "Close": [100.0, 110.0]})
         assert compute_open_to_close_return(df) == pytest.approx(110.0 / 90.0 - 1.0)
+
+
+class TestCallWithRetry:
+    def test_transient_failures_retry_then_succeed(self):
+        sleeps = []
+        calls = {"n": 0}
+
+        def flaky():
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise TimeoutError("slow")
+            return "ok"
+
+        assert _call_with_retry(flaky, _sleep=sleeps.append) == "ok"
+        assert calls["n"] == 3
+        assert sleeps == [1.0, 2.0]  # exponential backoff
+
+    def test_exhausted_retries_raise_transient_error(self):
+        def always_down():
+            raise ConnectionError("refused")
+
+        with pytest.raises(TransientFetchError, match="not an invalid ticker"):
+            _call_with_retry(always_down, _sleep=lambda _: None)
+
+    def test_non_transient_error_propagates_immediately(self):
+        calls = {"n": 0}
+
+        def broken():
+            calls["n"] += 1
+            raise ValueError("bad symbol")
+
+        with pytest.raises(ValueError):
+            _call_with_retry(broken, _sleep=lambda _: None)
+        assert calls["n"] == 1
+
+
+class TestFetchBatch:
+    def test_multiindex_batch_splits_valid_and_failed_tickers(self, monkeypatch):
+        good = _ohlcv_frame(periods=5, value=2.0)
+        bad = _ohlcv_frame(periods=5, value=1.0) * float("nan")
+        raw = pd.concat({"GOODT": good, "BADT": bad}, axis=1)
+
+        monkeypatch.setattr(
+            "data.fetcher.yf.download", lambda **kwargs: raw
+        )
+        frames, errors = fetch_ohlcv_batch(("GOODT", "BADT"), period="6mo")
+        assert list(frames) == ["GOODT"]
+        assert len(frames["GOODT"]) == 5
+        assert "BADT" in errors
+
+    def test_single_ticker_plain_columns(self, monkeypatch):
+        monkeypatch.setattr(
+            "data.fetcher.yf.download", lambda **kwargs: _ohlcv_frame(periods=4)
+        )
+        frames, errors = fetch_ohlcv_batch(("ONLYT",), period="1y")
+        assert list(frames) == ["ONLYT"]
+        assert errors == {}
+
+    def test_rate_limited_batch_raises_transient(self, monkeypatch):
+        def throttled(**kwargs):
+            raise ConnectionError("429")
+
+        monkeypatch.setattr("data.fetcher.yf.download", throttled)
+        monkeypatch.setattr("data.fetcher.time.sleep", lambda _: None)
+        with pytest.raises(TransientFetchError):
+            fetch_ohlcv_batch(("THROTTLED",), period="3mo")
+
+
+class TestSearchTickers:
+    def test_service_failure_returns_none_not_empty(self, monkeypatch):
+        def exploding_search(query):
+            raise ConnectionError("down")
+
+        monkeypatch.setattr("data.fetcher.yf.Search", exploding_search)
+        assert search_tickers("apple down test") is None
+
+    def test_blank_query_returns_empty_list(self):
+        assert search_tickers("   ") == []
 
 
 class TestFetchAutoAdjust:
