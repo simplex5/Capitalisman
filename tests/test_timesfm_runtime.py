@@ -79,3 +79,12 @@ def test_model_cannot_mutate_adapter_batch_size():
     runtime = TimesFMRuntime(model_factory=PaddingModel)
     results = runtime.forecast([np.arange(20)], horizon=3)
     assert len(results) == 1
+
+
+def test_timesfm_indicator_is_excluded_from_backtests():
+    """Pretraining overlap + sparse-origin columns make historical TimesFM
+    values non-point-in-time; the engine must exclude it (CMAN-D1-002)."""
+    from indicators.forecast import TimesFMForecast
+
+    indicator = TimesFMForecast(runtime=TimesFMRuntime(model_factory=FakeTimesFMModel))
+    assert indicator.backtest_safe is False

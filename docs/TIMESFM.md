@@ -83,7 +83,14 @@ For the selected analysis horizon, `TimesFM Forecast`:
 Forecast values are written only at actual forecast origins. They are not
 forward-filled across bars, which avoids presenting stale forecasts as if they
 were newly generated. Signal generation is horizon-aware throughout prediction,
-screening, comparison, and backtesting.
+screening, and comparison.
+
+The indicator is excluded from walk-forward backtests (`backtest_safe = False`):
+TimesFM's pretraining corpus overlaps any realistic backtest window, so its
+historical forecasts are not point-in-time, and forecast columns exist only at
+sparse origins while the backtest engine requires prefix-invariant values at
+every bar. Use the rolling benchmark below for historical evaluation; the
+indicator remains fully available for current predictions.
 
 ## Point-in-Time Benchmark
 

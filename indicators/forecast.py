@@ -61,6 +61,21 @@ class TimesFMForecast(BaseIndicator):
     def lookback(self) -> int:
         return MIN_CONTEXT
 
+    @property
+    def backtest_safe(self) -> bool:
+        """Excluded from walk-forward backtests for two reasons.
+
+        1. TimesFM is pretrained on public time series that overlap any
+           realistic backtest window, so its historical "forecasts" are not
+           point-in-time even when computed on prefix data.
+        2. Forecast columns exist only at sparse origins; the engine requires
+           a bar's value to be identical whether computed on data[:t+1] or the
+           full series, which does not hold at non-origin bars.
+        Historical evaluation belongs to the leak-aware rolling benchmark in
+        ml/benchmark.py (see docs/TIMESFM.md).
+        """
+        return False
+
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         return self.compute_for_horizon(df, DEFAULT_FORECAST_HORIZON)
 
