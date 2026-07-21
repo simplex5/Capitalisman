@@ -20,7 +20,10 @@ def _fetch_raw(ticker: str, period: str, interval: str) -> pd.DataFrame:
     """Fetch and validate OHLCV data (cached by Streamlit)."""
     try:
         t = yf.Ticker(ticker)
-        df = t.history(period=period, interval=interval)
+        # auto_adjust is passed explicitly so price semantics never depend on
+        # yfinance's default (which has changed between releases). All prices
+        # in the app are split/dividend-adjusted by policy.
+        df = t.history(period=period, interval=interval, auto_adjust=True)
     except Exception as e:
         raise ValueError(f"Failed to fetch data for '{ticker}': {e}")
 
@@ -52,7 +55,7 @@ def fetch_ohlcv(
     """Fetch OHLCV data for a ticker with caching.
 
     Returns a DataFrame with columns: Open, High, Low, Close, Volume.
-    Index is DatetimeIndex.
+    Index is DatetimeIndex. Prices are split/dividend-adjusted (auto_adjust=True).
 
     Raises ValueError if ticker is invalid or no data returned.
     """

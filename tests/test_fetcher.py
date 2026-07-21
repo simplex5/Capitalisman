@@ -1,7 +1,8 @@
 """Tests for data fetcher utility functions.
 
-Note: fetch_ohlcv and other @st.cache_data functions are not tested here
-because they depend on Streamlit runtime. We test pure utility functions only.
+Note: @st.cache_data functions are mostly tested via pure utility functions
+because they depend on Streamlit runtime. The fetch path itself is exercised
+only with a monkeypatched yf.Ticker (never the network).
 """
 
 import pandas as pd
@@ -10,6 +11,7 @@ import pytest
 from data.fetcher import (
     compute_buy_and_hold,
     compute_open_to_close_return,
+    fetch_ohlcv,
     is_crypto_ticker,
     slice_date_range,
     trim_to_period,
@@ -72,6 +74,30 @@ class TestOpenToCloseReturn:
     def test_uses_first_open_and_last_close(self):
         df = pd.DataFrame({"Open": [90.0, 105.0], "Close": [100.0, 110.0]})
         assert compute_open_to_close_return(df) == pytest.approx(110.0 / 90.0 - 1.0)
+
+
+class TestFetchAutoAdjust:
+    def test_history_called_with_explicit_auto_adjust(self, monkeypatch):
+        """Price adjustment must be pinned explicitly, never left to
+        yfinance's default (which has changed between releases)."""
+        captured = {}
+
+        class FakeTicker:
+            def __init__(self, symbol):
+                captured["symbol"] = symbol
+
+            def history(self, **kwargs):
+                captured.update(kwargs)
+                index = pd.date_range("2024-01-01", periods=5, freq="D")
+                return pd.DataFrame(
+                    {col: [1.0] * 5 for col in ["Open", "High", "Low", "Close", "Volume"]},
+                    index=index,
+                )
+
+        monkeypatch.setattr("data.fetcher.yf.Ticker", FakeTicker)
+        df = fetch_ohlcv("FAKE-AUTOADJ-TEST", period="1mo", interval="1d")
+        assert captured["auto_adjust"] is True
+        assert len(df) == 5
 
 
 class TestPeriodSlicing:
