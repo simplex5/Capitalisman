@@ -39,7 +39,9 @@ def render():
         render_recent_tickers("backtest_ticker")
         period = period_select(key="backtest_period", default="1y")
         horizon = horizon_input(key="backtest_horizon")
-        selected_indicators = indicator_picker(key="backtest_indicators")
+        selected_indicators = indicator_picker(
+            key="backtest_indicators", timesfm_use_case="backtest"
+        )
         initial_capital = capital_input(key="backtest_capital")
         cost_pct = cost_input(key="backtest_cost")
         advanced_settings(key_prefix="backtest_adv")

@@ -12,6 +12,8 @@ from typing import Callable
 
 import numpy as np
 
+from ml.timesfm_profiles import TimesFMProfile
+
 
 DEFAULT_MODEL_ID = "google/timesfm-2.5-200m-pytorch"
 QUANTILE_LEVELS = tuple(round(level / 10, 1) for level in range(1, 10))
@@ -22,8 +24,29 @@ class TimesFMRuntimeConfig:
     model_id: str = DEFAULT_MODEL_ID
     device: str = "auto"
     max_context: int = 1024
+    forecast_context: int | None = None
     max_horizon: int = 256
     batch_size: int = 32
+    chunk_size: int = 32
+    memory_target_fraction: float = 0.72
+    profile_name: str = "custom"
+    use_case: str = "interactive"
+
+    @property
+    def effective_context(self) -> int:
+        return min(self.forecast_context or self.max_context, self.max_context)
+
+    def __post_init__(self) -> None:
+        if self.max_context < 32:
+            raise ValueError("TimesFM max_context must be at least 32")
+        if self.effective_context < 32:
+            raise ValueError("TimesFM forecast_context must be at least 32")
+        if self.max_horizon < 1:
+            raise ValueError("TimesFM max_horizon must be positive")
+        if self.batch_size < 1 or self.chunk_size < 1:
+            raise ValueError("TimesFM batch and chunk sizes must be positive")
+        if not 0.1 <= self.memory_target_fraction <= 0.95:
+            raise ValueError("TimesFM memory target fraction must be between 0.1 and 0.95")
 
     @classmethod
     def from_environment(cls) -> "TimesFMRuntimeConfig":
@@ -32,8 +55,32 @@ class TimesFMRuntimeConfig:
             model_id=os.getenv("CAPITALISMAN_TIMESFM_MODEL_ID", DEFAULT_MODEL_ID),
             device=os.getenv("CAPITALISMAN_TIMESFM_DEVICE", "auto"),
             max_context=int(os.getenv("CAPITALISMAN_TIMESFM_MAX_CONTEXT", "1024")),
+            forecast_context=int(
+                os.getenv("CAPITALISMAN_TIMESFM_FORECAST_CONTEXT", "1024")
+            ),
             max_horizon=int(os.getenv("CAPITALISMAN_TIMESFM_MAX_HORIZON", "256")),
             batch_size=int(os.getenv("CAPITALISMAN_TIMESFM_BATCH_SIZE", "32")),
+            chunk_size=int(os.getenv("CAPITALISMAN_TIMESFM_CHUNK_SIZE", "32")),
+            memory_target_fraction=float(
+                os.getenv("CAPITALISMAN_TIMESFM_MEMORY_TARGET", "0.72")
+            ),
+            profile_name=os.getenv("CAPITALISMAN_TIMESFM_PROFILE", "custom"),
+            use_case=os.getenv("CAPITALISMAN_TIMESFM_USE_CASE", "interactive"),
+        )
+
+    @classmethod
+    def from_profile(cls, profile: TimesFMProfile) -> "TimesFMRuntimeConfig":
+        return cls(
+            model_id=os.getenv("CAPITALISMAN_TIMESFM_MODEL_ID", DEFAULT_MODEL_ID),
+            device=profile.device,
+            max_context=profile.max_context,
+            forecast_context=profile.forecast_context,
+            max_horizon=profile.max_horizon,
+            batch_size=profile.batch_size,
+            chunk_size=profile.chunk_size,
+            memory_target_fraction=profile.memory_target_fraction,
+            profile_name=profile.name,
+            use_case=profile.use_case,
         )
 
 
@@ -49,6 +96,7 @@ class TimesFMRuntimeStatus:
     cuda_version: str | None = None
     gpu_name: str | None = None
     gpu_memory_gb: float | None = None
+    gpu_free_memory_gb: float | None = None
     available_ram_gb: float | None = None
     free_disk_gb: float | None = None
 
@@ -131,6 +179,11 @@ class TimesFMRuntime:
         if cuda_available:
             status.gpu_name = torch.cuda.get_device_name(0)
             status.gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
+            try:
+                free_bytes, _ = torch.cuda.mem_get_info(0)
+                status.gpu_free_memory_gb = free_bytes / 1024**3
+            except (AttributeError, RuntimeError, TypeError):
+                pass
 
         if requested == "cuda" and not cuda_available:
             status.state = "unavailable"
@@ -227,21 +280,42 @@ class TimesFMRuntime:
         if not inputs:
             return []
 
-        self.load()
         prepared = [
-            np.asarray(values[-self.config.max_context :], dtype=np.float32)
+            np.asarray(values[-self.config.effective_context :], dtype=np.float32)
             for values in inputs
         ]
+        for index, values in enumerate(prepared):
+            if values.ndim != 1 or len(values) < 32:
+                raise ValueError(
+                    f"Input {index} must be a one-dimensional series with at least 32 values"
+                )
+            if not np.all(np.isfinite(values)):
+                raise ValueError(f"Input {index} contains NaN or infinite values")
+        self.load()
         input_count = len(prepared)
-        point, raw_quantiles = self._model.forecast(
-            horizon=horizon, inputs=list(prepared)
-        )
-        point = np.asarray(point, dtype=float)
-        raw_quantiles = np.asarray(raw_quantiles, dtype=float)
+        point_parts = []
+        quantile_parts = []
+        for start in range(0, input_count, self.config.chunk_size):
+            chunk = list(prepared[start : start + self.config.chunk_size])
+            chunk_point, chunk_quantiles = self._model.forecast(
+                horizon=horizon, inputs=chunk
+            )
+            point_parts.append(np.asarray(chunk_point, dtype=float))
+            quantile_parts.append(np.asarray(chunk_quantiles, dtype=float))
+        point = np.concatenate(point_parts, axis=0)
+        raw_quantiles = np.concatenate(quantile_parts, axis=0)
         if point.shape != (input_count, horizon):
             raise RuntimeError(f"Unexpected point forecast shape: {point.shape}")
-        if raw_quantiles.shape[:2] != (input_count, horizon) or raw_quantiles.shape[2] < 10:
+        if (
+            raw_quantiles.ndim != 3
+            or raw_quantiles.shape[:2] != (input_count, horizon)
+            or raw_quantiles.shape[2] < 10
+        ):
             raise RuntimeError(f"Unexpected quantile forecast shape: {raw_quantiles.shape}")
+        if not np.all(np.isfinite(point)) or not np.all(np.isfinite(raw_quantiles)):
+            raise RuntimeError("TimesFM returned NaN or infinite forecast values")
+        if np.any(np.diff(raw_quantiles[:, :, 1:10], axis=2) < -1e-6):
+            raise RuntimeError("TimesFM returned crossing forecast quantiles")
 
         forecasts = []
         for batch_idx in range(input_count):

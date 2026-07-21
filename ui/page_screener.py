@@ -79,7 +79,9 @@ def render():
             st.caption(f"{len(tickers)} tickers: {', '.join(tickers)}")
 
         horizon = horizon_input(key="screener_horizon")
-        selected_indicators = indicator_picker(key="screener_indicators")
+        selected_indicators = indicator_picker(
+            key="screener_indicators", timesfm_use_case="watchlist"
+        )
 
         scan_clicked = st.button("Scan Watchlist", type="primary", use_container_width=True)
 

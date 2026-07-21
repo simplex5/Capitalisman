@@ -58,7 +58,7 @@ def test_rejects_unexpected_model_shapes():
 
     runtime = TimesFMRuntime(model_factory=BadModel)
     with pytest.raises(RuntimeError, match="Unexpected point forecast shape"):
-        runtime.forecast([np.arange(20)], horizon=5)
+        runtime.forecast([np.arange(40)], horizon=5)
 
 
 def test_config_reads_environment(monkeypatch):
@@ -77,5 +77,47 @@ def test_model_cannot_mutate_adapter_batch_size():
             return original
 
     runtime = TimesFMRuntime(model_factory=PaddingModel)
-    results = runtime.forecast([np.arange(20)], horizon=3)
+    results = runtime.forecast([np.arange(40)], horizon=3)
     assert len(results) == 1
+
+
+def test_forecast_uses_selected_context_length():
+    seen_lengths = []
+
+    class RecordingModel(FakeTimesFMModel):
+        def forecast(self, horizon, inputs):
+            seen_lengths.extend(len(values) for values in inputs)
+            return super().forecast(horizon, inputs)
+
+    runtime = TimesFMRuntime(
+        TimesFMRuntimeConfig(
+            max_context=256, forecast_context=64, chunk_size=2
+        ),
+        model_factory=RecordingModel,
+    )
+    runtime.forecast([np.arange(200)] * 3, horizon=3)
+    assert seen_lengths == [64, 64, 64]
+
+
+def test_forecast_rejects_non_finite_inputs():
+    values = np.arange(40, dtype=float)
+    values[-1] = np.nan
+    runtime = TimesFMRuntime(model_factory=FakeTimesFMModel)
+    with pytest.raises(ValueError, match="NaN or infinite"):
+        runtime.forecast([values], horizon=3)
+
+
+def test_forecast_chunks_large_calls():
+    calls = []
+
+    class RecordingModel(FakeTimesFMModel):
+        def forecast(self, horizon, inputs):
+            calls.append(len(inputs))
+            return super().forecast(horizon, inputs)
+
+    runtime = TimesFMRuntime(
+        TimesFMRuntimeConfig(chunk_size=2), model_factory=RecordingModel
+    )
+    results = runtime.forecast([np.arange(40)] * 5, horizon=3)
+    assert len(results) == 5
+    assert calls == [2, 2, 1]

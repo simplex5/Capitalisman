@@ -29,7 +29,7 @@ def test_benchmark_computes_probabilistic_metrics():
     )
     runtime = TimesFMRuntime(model_factory=TrendModel)
     result = benchmark_close_series(
-        close, runtime, horizon=5, min_context=30, step=10, batch_size=2
+        close, runtime, horizon=5, min_context=32, step=10, batch_size=2
     )
 
     assert result.observations == 6
@@ -37,11 +37,11 @@ def test_benchmark_computes_probabilistic_metrics():
     assert 0.0 <= result.interval_80_coverage <= 1.0
     assert 0.0 <= result.probability_up_brier <= 1.0
     assert result.pinball_q10 >= 0.0
-    assert result.evaluations[0].origin == str(close.index[29])
-    assert result.evaluations[0].target == str(close.index[34])
+    assert result.evaluations[0].origin == str(close.index[31])
+    assert result.evaluations[0].target == str(close.index[36])
 
 
 def test_benchmark_rejects_insufficient_history():
     runtime = TimesFMRuntime(model_factory=TrendModel)
     with pytest.raises(ValueError, match="Need at least"):
-        benchmark_close_series(pd.Series(np.arange(20)), runtime, horizon=5, min_context=20)
+        benchmark_close_series(pd.Series(np.arange(20)), runtime, horizon=5, min_context=32)

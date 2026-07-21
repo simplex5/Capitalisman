@@ -21,7 +21,13 @@ from config.settings import (
 )
 from config.overrides import clear_overrides, get_setting, set_override
 from indicators.registry import get_all_indicators
-from ml.timesfm_runtime import get_timesfm_runtime
+from ml.timesfm_profiles import (
+    HardwareCapabilities,
+    PROFILE_PREFERENCES,
+    detect_hardware,
+    select_runtime_profile,
+)
+from ml.timesfm_runtime import TimesFMRuntimeConfig, get_timesfm_runtime
 
 
 def ticker_input(key: str = "ticker") -> str:
@@ -63,7 +69,9 @@ def horizon_input(key: str = "horizon") -> int:
     )
 
 
-def indicator_picker(key: str = "indicators") -> list[str]:
+def indicator_picker(
+    key: str = "indicators", timesfm_use_case: str = "interactive"
+) -> list[str]:
     """Render indicator multi-select and return chosen names."""
     all_indicators = get_all_indicators()
     names = sorted(all_indicators.keys())
@@ -82,15 +90,36 @@ def indicator_picker(key: str = "indicators") -> list[str]:
         if importlib.util.find_spec("timesfm") is None:
             optional_status.append("TimesFM Forecast needs TimesFM 2.5 + PyTorch")
         else:
-            runtime_status = get_timesfm_runtime().status
+            profile_choice = st.selectbox(
+                "TimesFM Runtime Profile",
+                PROFILE_PREFERENCES,
+                index=0,
+                key=f"{key}_timesfm_profile",
+                format_func=str.title,
+                help=(
+                    "Controls hardware utilization and workload size. It does not "
+                    "change trading thresholds or claim a more accurate forecast."
+                ),
+            )
+            hardware = detect_hardware()
+            if os.getenv("CAPITALISMAN_TIMESFM_DEVICE", "auto").lower() == "cpu":
+                hardware = HardwareCapabilities(
+                    "cpu", available_ram_gb=hardware.available_ram_gb
+                )
+            profile = select_runtime_profile(
+                hardware, use_case=timesfm_use_case, preference=profile_choice
+            )
+            runtime = get_timesfm_runtime(TimesFMRuntimeConfig.from_profile(profile))
+            runtime_status = runtime.status
             if runtime_status.state not in {"ready", "loaded"}:
                 optional_status.append(f"TimesFM: {runtime_status.message}")
             else:
                 st.info(
-                    f"**TimesFM mode selected** — the local model will run on "
-                    f"{runtime_status.resolved_device.upper()} when you analyze. "
-                    f"Its standalone forecast will appear above the combined "
-                    f"indicator signal."
+                    f"**TimesFM {profile.preference.title()} profile** — "
+                    f"{runtime_status.resolved_device.upper()}, "
+                    f"{profile.forecast_context:,}-bar context, batch "
+                    f"{profile.batch_size}, chunk {profile.chunk_size}. "
+                    f"Use case: {profile.use_case}."
                 )
     if optional_status:
         st.caption("Unavailable: " + "; ".join(optional_status))
@@ -125,7 +154,17 @@ def analysis_settings_signature() -> tuple:
     thresholds = tuple(
         (name, get_setting(name)) for name in sorted(TUNABLE_THRESHOLDS)
     )
-    return weights, thresholds
+    runtime = get_timesfm_runtime()
+    timesfm = (
+        runtime.config.profile_name,
+        runtime.config.use_case,
+        runtime.config.max_context,
+        runtime.config.effective_context,
+        runtime.config.batch_size,
+        runtime.config.chunk_size,
+        runtime.config.memory_target_fraction,
+    )
+    return weights, thresholds, timesfm
 
 
 def capital_input(key: str = "capital") -> float:

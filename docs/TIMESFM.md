@@ -60,8 +60,71 @@ Optional runtime settings:
 | `CAPITALISMAN_TIMESFM_DEVICE` | `auto` | `auto`, `cuda`, or `cpu` |
 | `CAPITALISMAN_TIMESFM_MODEL_ID` | `google/timesfm-2.5-200m-pytorch` | Model source |
 | `CAPITALISMAN_TIMESFM_MAX_CONTEXT` | `1024` | Maximum input bars |
+| `CAPITALISMAN_TIMESFM_FORECAST_CONTEXT` | `1024` | Selected input bars, bounded by maximum context |
 | `CAPITALISMAN_TIMESFM_MAX_HORIZON` | `256` | Maximum output bars |
 | `CAPITALISMAN_TIMESFM_BATCH_SIZE` | `32` | Compiled inference batch size |
+| `CAPITALISMAN_TIMESFM_CHUNK_SIZE` | `32` | Maximum series sent to the model per call |
+| `CAPITALISMAN_TIMESFM_MEMORY_TARGET` | `0.72` | Fraction of total VRAM allowed by empirical recommendations |
+| `CAPITALISMAN_TIMESFM_PROFILE` | `custom` | Profile label recorded with results |
+| `CAPITALISMAN_TIMESFM_USE_CASE` | `interactive` | Workload label recorded with results |
+
+## Hardware and Workload Profiles
+
+Capitalisman separates hardware utilization from predictive methodology. Runtime
+profiles control context capacity, selected context, batch size, and workload
+chunking. They do not change signal thresholds, indicator weights, target
+representation, or probability calibration.
+
+The application offers `Auto`, `Fast`, `Balanced`, and `Thorough` profiles when
+TimesFM is selected. Selection uses currently free VRAM rather than relying only
+on the GPU product name, then adapts to the workload:
+
+| Use case | Behavior |
+|---|---|
+| `interactive` | Latest forecast with a single-series chunk |
+| `watchlist` | Batched latest forecasts across assets |
+| `backtest` | Bounded historical-origin batches |
+| `research` | Larger context and batch envelope for benchmark sweeps |
+
+The starting memory tiers are conservative: at least 24 GB free VRAM uses the
+enthusiast tier, 14 GB the high tier, 10 GB the performance tier, and 7 GB the
+standard tier. Lower-memory GPUs and CPUs receive reduced contexts and batches.
+Because other applications may occupy VRAM, an RTX 5090 can intentionally select
+a lower tier when little memory is free.
+
+Balanced starting points for common dedicated GPUs are:
+
+| Typical hardware | Free-VRAM tier | Interactive | Watchlist | Research |
+|---|---|---|---|---|
+| RTX 5090, about 32 GB free | Enthusiast | context 1024, batch 32, chunk 1 | context 1024, batch 256, chunk 128 | context 2048, batch 256, chunk 128 |
+| RTX 5070 Ti, about 16 GB free | High | context 1024, batch 32, chunk 1 | context 1024, batch 128, chunk 128 | context 2048, batch 128, chunk 128 |
+| RTX 5070, about 12 GB free | Performance | context 1024, batch 32, chunk 1 | context 1024, batch 64, chunk 128 | context 2048, batch 64, chunk 128 |
+| 8 GB GPU | Standard | context 1024, batch 32, chunk 1 | context 1024, batch 64, chunk 128 | context 2048, batch 64, chunk 128 |
+
+These are starting limits, not claims of superior predictive accuracy. `Fast`
+halves the selected context and caps batches at 64. `Thorough` doubles the
+selected context where feasible, reduces batch size, and raises the memory target
+from 72% to 82%. The empirical probe should be used before sustained large runs.
+
+Inspect the recommendation without loading weights:
+
+```bash
+conda run -n capitalisman-timesfm python -m scripts.timesfm_check \
+  --profile balanced --use-case watchlist
+```
+
+Run the opt-in empirical probe, which loads the model and compares representative
+series-per-call sizes:
+
+```bash
+conda run -n capitalisman-timesfm python -m scripts.timesfm_check \
+  --profile thorough --use-case research --autotune
+```
+
+The probe recommends a throughput chunk size for that installed GPU, driver,
+PyTorch, TimesFM, context, and horizon combination. It does not tune forecast
+accuracy. Context length and other analytic choices must still be selected using
+chronological out-of-sample evaluation.
 
 To require acceleration when launching the app:
 

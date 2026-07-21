@@ -19,7 +19,7 @@ from signals.base import SignalDirection, SignalResult
 
 
 DEFAULT_FORECAST_HORIZON = 10
-MIN_CONTEXT = 30
+MIN_CONTEXT = 32
 MIN_DIRECTIONAL_PROBABILITY = 0.60
 
 
@@ -76,9 +76,14 @@ class TimesFMForecast(BaseIndicator):
             self.last_error = f"TimesFM needs at least {MIN_CONTEXT} bars"
             return result
 
-        origins = list(range(MIN_CONTEXT - 1, len(result), max(1, horizon_days)))
-        if origins[-1] != len(result) - 1:
-            origins.append(len(result) - 1)
+        if self.runtime.config.use_case in {"interactive", "watchlist"}:
+            origins = [len(result) - 1]
+        else:
+            origins = list(
+                range(MIN_CONTEXT - 1, len(result), max(1, horizon_days))
+            )
+            if origins[-1] != len(result) - 1:
+                origins.append(len(result) - 1)
         contexts = [
             result["Close"].iloc[: origin + 1].to_numpy(dtype=np.float32)
             for origin in origins
@@ -110,10 +115,12 @@ class TimesFMForecast(BaseIndicator):
     def get_signal_for_horizon(
         self, df: pd.DataFrame, horizon_days: int, idx: int = -1
     ) -> SignalResult:
-        if not self._has_forecast(df, horizon_days, idx):
-            computed = self.compute_for_horizon(df, horizon_days)
-        else:
+        if self._has_forecast(df, horizon_days, idx) or self._has_computed_horizon(
+            df, horizon_days
+        ):
             computed = df
+        else:
+            computed = self.compute_for_horizon(df, horizon_days)
 
         probability_up = computed["TFM_probability_up"].iloc[idx]
         probability_profit = computed["TFM_probability_profit"].iloc[idx]
@@ -192,6 +199,14 @@ class TimesFMForecast(BaseIndicator):
             and not pd.isna(df["TFM_horizon"].iloc[idx])
             and int(df["TFM_horizon"].iloc[idx]) == horizon
         )
+
+    @staticmethod
+    def _has_computed_horizon(df: pd.DataFrame, horizon: int) -> bool:
+        """Return whether this frame already contains forecasts for a horizon."""
+        if "TFM_horizon" not in df.columns:
+            return False
+        computed = df["TFM_horizon"].dropna()
+        return not computed.empty and bool((computed.astype(int) == horizon).all())
 
     @staticmethod
     def _analyze_forecast(

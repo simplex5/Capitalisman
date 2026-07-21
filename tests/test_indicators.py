@@ -409,7 +409,9 @@ class TestTimesFMForecast:
         )
 
     def test_historical_signal_ignores_future_volatility(self, ohlcv_200_up):
-        idx = 100
+        from ml.timesfm_runtime import TimesFMRuntimeConfig
+
+        idx = 101
         changed_future = ohlcv_200_up.copy()
         changed_future.iloc[idx + 1 :, changed_future.columns.get_loc("Close")] *= np.linspace(
             0.2, 5.0, len(changed_future) - idx - 1
@@ -417,9 +419,32 @@ class TestTimesFMForecast:
 
         first_indicator = self._indicator()
         second_indicator = self._indicator()
+        config = TimesFMRuntimeConfig(use_case="backtest")
+        first_indicator.runtime.config = config
+        second_indicator.runtime.config = config
         first_df = first_indicator.compute_for_horizon(ohlcv_200_up, 10)
         second_df = second_indicator.compute_for_horizon(changed_future, 10)
         first = first_indicator.get_signal_for_horizon(first_df, 10, idx=idx)
         second = second_indicator.get_signal_for_horizon(second_df, 10, idx=idx)
         assert first.direction == second.direction
         assert first.confidence == pytest.approx(second.confidence)
+
+    def test_sparse_backtest_origin_does_not_rerun_full_forecast(self, ohlcv_200_up):
+        from ml.timesfm_runtime import TimesFMRuntimeConfig
+
+        indicator = self._indicator()
+        indicator.runtime.config = TimesFMRuntimeConfig(use_case="backtest")
+        original_forecast = indicator.runtime.forecast
+        calls = 0
+
+        def counting_forecast(inputs, horizon):
+            nonlocal calls
+            calls += 1
+            return original_forecast(inputs, horizon)
+
+        indicator.runtime.forecast = counting_forecast
+        computed = indicator.compute_for_horizon(ohlcv_200_up, 10)
+        assert calls == 1
+        signal = indicator.get_signal_for_horizon(computed, 10, idx=100)
+        assert signal.direction == SignalDirection.HOLD
+        assert calls == 1

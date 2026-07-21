@@ -31,7 +31,46 @@ workflow that explains:
       directional accuracy, interval coverage, Brier score, and pinball loss.
 - [x] Validate the test suite and real inference on an NVIDIA CUDA device.
 
+### TimesFM Runtime Profiles — Completed
+
+- [x] Detect currently free VRAM and available system RAM instead of selecting
+      settings from GPU product names alone.
+- [x] Add Auto, Fast, Balanced, and Thorough runtime profiles for interactive,
+      watchlist, backtest, and research workloads.
+- [x] Keep compiled context capacity separate from the selected forecast context
+      so hardware capacity does not silently become a modeling decision.
+- [x] Bound large inference requests with profile-specific chunks and validate
+      input length, finite values, output shapes, finite forecasts, and quantile
+      ordering.
+- [x] Add an opt-in empirical throughput probe that reports latency, throughput,
+      peak allocated VRAM, failures, and a recommended workload chunk size.
+- [x] Make interactive and watchlist profiles forecast only the latest origin,
+      while retaining scheduled historical origins for backtest and research.
+- [x] Prevent sparse historical rows from triggering redundant full-model
+      inference.
+- [x] Document starting profiles for RTX 5090, RTX 5070 Ti, RTX 5070, 8 GB GPU,
+      and CPU systems without presenting throughput settings as accuracy tuning.
+
 ### TimesFM Forecast Development
+
+#### Phase 0 — Correctness and Runtime Hardening
+
+- [ ] Replace hard 0%/100% probability extrapolation outside q10-q90 with honest
+      tail semantics, then label uncalibrated values as model-derived scores
+      until held-out reliability calibration exists.
+- [ ] Make transaction-cost treatment symmetric by calculating the short-side
+      probability of finishing below `current_price * (1 - cost)`.
+- [ ] Remove process-global `CUDA_VISIBLE_DEVICES` mutation and support explicit,
+      reversible Auto, CUDA, and CPU selection with actual loaded-device checks.
+- [ ] Record actual model/tensor device, peak allocated VRAM, compilation time,
+      inference time, and realized series throughput in runtime status.
+- [ ] Persist empirical profile results using a fingerprint of GPU UUID, driver,
+      CUDA, PyTorch, TimesFM, model, context, horizon, and workload; invalidate
+      stale results automatically.
+- [ ] Run and record real profile smoke tests and empirical probes on the target
+      RTX 5090 environment, plus at least one lower-VRAM CUDA configuration.
+- [ ] Add explicit cancellation and safe out-of-memory recovery for long research
+      and backtest jobs.
 
 #### Phase 1 — Establish Measurable Value
 
@@ -47,6 +86,10 @@ workflow that explains:
       baseline and where it fails.
 - [ ] Define minimum acceptance criteria before increasing TimesFM's voting weight
       or presenting it as more than experimental.
+- [ ] Add block-bootstrap confidence intervals and appropriate forecast-comparison
+      tests so small apparent improvements are not treated as established edge.
+- [ ] Account for overlapping forecast targets when selecting origin spacing,
+      estimating uncertainty, and splitting train/calibration/test periods.
 
 #### Phase 2 — Calibration and Regime Awareness
 
@@ -69,12 +112,15 @@ workflow that explains:
       detrended input representations using identical evaluation windows.
 - [ ] Add covariate experiments for volume, realized volatility, market returns,
       rates, and regime features without introducing future leakage.
+- [ ] Require every dynamic XReg experiment to declare how future-horizon
+      covariates are known or forecast; reject realized future market inputs.
 - [ ] Build a local PyTorch ensemble that learns when to use TimesFM versus
       statistical and technical baselines.
 - [ ] Investigate parameter-efficient fine-tuning only after the zero-shot
       benchmark and data-splitting framework are stable.
-- [ ] Add mixed-precision inference, safe batch sizing, model caching, and runtime
-      telemetry for supported NVIDIA hardware.
+- [ ] Validate mixed-precision inference against float32 forecasts and calibration
+      before enabling it; add reusable compiled-model caching across compatible
+      profiles.
 - [ ] Track model lineage, data lineage, random seeds, and reproducibility metadata
       for every trained or calibrated artifact.
 
@@ -86,6 +132,8 @@ workflow that explains:
       value beyond simpler indicators.
 - [ ] Show baseline comparisons, sample size, regime, data freshness, and model
       status beside every forecast.
+- [x] Let users select Auto, Fast, Balanced, and Thorough workload profiles and
+      inspect selected context, batch, chunk, device, and use case.
 - [ ] Let users select Auto, CUDA, or CPU and inspect model/cache information from
       the interface.
 - [ ] Provide cancellable progress, estimated workload, and bounded benchmark
@@ -97,6 +145,8 @@ workflow that explains:
 
 - [ ] Add a signed contribution chart for every indicator.
 - [ ] Separate directional agreement, historical reliability, and expected move.
+- [ ] Prevent a single weak actionable vote from appearing as 100% directional
+      agreement merely because every other indicator returned HOLD.
 - [ ] Summarize conflicting indicator groups in plain language.
 - [ ] Add approachable explanations for backtest metrics and assumptions.
 - [ ] Display data freshness, missing data, and unavailable indicators.
@@ -125,7 +175,8 @@ workflow that explains:
 ### Out-of-Sample Validation
 
 - [ ] Add explicit training, validation, and test date ranges.
-- [ ] Add rolling walk-forward evaluation.
+- [x] Add causal rolling-origin TimesFM evaluation and next-bar-entry strategy
+      backtesting without using future rows in signal construction.
 - [ ] Prevent thresholds or weights selected on one period from being evaluated
       as though they were chosen independently on that same period.
 - [ ] Add parameter-sensitivity charts to reveal fragile configurations.
@@ -158,6 +209,24 @@ workflow that explains:
 - [ ] Account for short borrow costs and asset-specific execution assumptions.
 - [ ] Report portfolio-level volatility, drawdown, concentration, and turnover.
 
+## Backtest and Market-Data Integrity
+
+- [ ] Replace trade-return Sharpe approximation with a daily marked-to-market
+      equity series that represents cash and open long/short positions.
+- [ ] Model financing, borrow availability and fees, dividends, splits, delisting
+      returns, trading halts, and asset-specific transaction costs where relevant.
+- [ ] Store immutable, timestamped market-data snapshots so revised adjusted
+      history cannot silently change a previously reported result.
+- [ ] Add survivorship-bias-aware historical universes for multi-asset research
+      instead of evaluating only today's constituents and watchlists.
+- [ ] Validate chronological ordering, duplicate timestamps, interval regularity,
+      freshness, timezone, OHLC relationships, volume, and corporate-action
+      treatment at the data-provider boundary.
+- [ ] Distinguish data-provider failure, missing optional data, insufficient
+      history, and genuine neutral signals instead of broadly swallowing errors.
+- [ ] Add reproducible execution assumptions and configuration identifiers to
+      every exported backtest report.
+
 ## Technical Foundation
 
 - [ ] Separate the research engine from Streamlit-specific caching and state.
@@ -169,16 +238,23 @@ workflow that explains:
 - [ ] Add UI integration tests for navigation, saved strategies, reset behavior,
       and stale-state prevention.
 - [ ] Add performance benchmarks for indicator computation and watchlist scans.
+- [ ] Add continuous integration with formatting, linting, type checking, unit
+      tests, and optional TimesFM API-contract tests that do not download weights.
+- [ ] Add an opt-in CUDA integration test matrix for supported runtime profiles,
+      including output equivalence across chunk and batch sizes.
 
 ## Suggested Delivery Order
 
-1. Expand TimesFM baselines and multi-asset benchmark coverage.
-2. Add benchmark persistence and an interpretable results view.
-3. Add chronological calibration and regime breakdowns.
-4. Add signal contribution visualization and strategy presets.
-5. Add saved and versioned strategy configurations.
-6. Evaluate local ensembles and parameter-efficient fine-tuning.
-7. Add portfolio backtesting, research reports, and alerts.
+1. Finish TimesFM probability, cost-symmetry, device-selection, and profile
+   persistence correctness work.
+2. Expand TimesFM baselines and multi-asset benchmark coverage.
+3. Add benchmark persistence and an interpretable results view.
+4. Add chronological calibration, statistical uncertainty, and regime breakdowns.
+5. Correct signal-confidence semantics and add contribution visualization.
+6. Establish immutable market-data artifacts and marked-to-market backtesting.
+7. Add strategy presets plus saved and versioned strategy configurations.
+8. Evaluate safe covariates, local ensembles, and parameter-efficient fine-tuning.
+9. Add portfolio backtesting, research reports, and alerts.
 
 ## Guiding Principle
 

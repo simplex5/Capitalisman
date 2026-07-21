@@ -129,6 +129,11 @@ for health checks, configuration, interpretation, and point-in-time benchmarking
 - Uses the official TimesFM 2.5 PyTorch API with lazy model loading.
 - Detects CUDA availability, package compatibility, memory, and disk space before
   attempting inference.
+- Selects hardware-aware Fast, Balanced, and Thorough runtime profiles from free
+  VRAM and workload type, while keeping performance settings separate from
+  predictive methodology.
+- Includes an opt-in empirical throughput probe for choosing a safe workload
+  chunk size on the installed GPU and software stack.
 - Produces horizon-aware point and quantile forecasts rather than a single fixed
   10-day estimate.
 - Displays median return, q10/q90 range, probability of an upward move, and
