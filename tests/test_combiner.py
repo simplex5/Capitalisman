@@ -62,12 +62,12 @@ class TestCombineSignals:
         result = combine_signals(all_indicators, computed_df, horizon_days=5, precomputed=True)
         assert isinstance(result, CombinedSignal)
 
-    def test_different_horizons_may_differ(self, all_indicators, computed_df):
+    def test_different_horizons_apply_different_timescale_weights(self, all_indicators, computed_df):
         short = combine_signals(all_indicators, computed_df, horizon_days=1, precomputed=True)
         long_ = combine_signals(all_indicators, computed_df, horizon_days=20, precomputed=True)
-        # Scores should differ due to timescale adjustments
-        assert short.scores != long_.scores or short.direction != long_.direction or True
-        # At minimum, both should be valid
+        # Timescale adjustments weight categories differently per horizon, so
+        # the weighted scores must actually differ on trending data.
+        assert short.scores != long_.scores
         assert isinstance(short, CombinedSignal)
         assert isinstance(long_, CombinedSignal)
 
