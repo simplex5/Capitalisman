@@ -29,3 +29,6 @@ Thumbs.db
 # Environment variables
 .env
 .env.local
+
+# simplex_mind brain (local ticket DB — never commit)
+database/

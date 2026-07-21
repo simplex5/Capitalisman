@@ -1,0 +1,66 @@
+# CLAUDE.md.ref — capitalisman Project Instructions
+<!-- Project-specific instructions. Loaded by simplex_mind via projects.yaml -->
+<!-- Agnostic protocols (memory, tickets, git, response summary) live in simplex_mind's CLAUDE.md -->
+
+## Project Overview
+
+**Capitalisman** — a stock & crypto research dashboard: technical + cross-asset signals are
+combined into BUY/SELL/HOLD calls with a directional-agreement score, plus backtesting.
+
+- **Stack:** Python + Streamlit. Data via yfinance; indicators via `ta`; plotly charts;
+  pandas/numpy/scipy. Optional TimesFM ML forecasting (separate conda env, `environment-timesfm.yml`).
+- **Purpose:** Personal market-research tool — signal exploration, screening, backtesting.
+- **Provenance:** Fork of a friend's project. `origin` = simplex5/Capitalisman (ours),
+  `upstream` = NicholasCStanley/Capitalisman (friend's original — pull-only).
+- **User:** simplex5 (single user, local machine only).
+
+---
+
+## How to Operate
+
+1. Install deps: `pip install -r requirements.txt` (dev extras: `requirements-dev.txt`;
+   TimesFM needs the conda env from `environment-timesfm.yml`).
+2. Run the app: `streamlit run app.py` — sidebar nav: Predict / Backtest / Explore /
+   Search / Compare / Screener (pages live in `ui/page_*.py`).
+3. Test: `pytest tests/` (covers backtest, combiner, fetcher, indicators, timesfm).
+4. Work on `develop`; `main` stays stable and mirrors upstream-compatible history.
+5. Sync friend's changes: `git fetch upstream && git merge upstream/main` (into `main`, then develop).
+6. Track all work via simplex_mind's ticket system (prefix: CMAN).
+
+---
+
+## Key Files
+
+```
+Capitalisman/
+├── CLAUDE.md.ref              <- this file
+├── app.py                     <- Streamlit entrypoint + sidebar navigation
+├── ui/                        <- page modules (page_predict.py, page_backtest.py, ...)
+├── signals/                   <- signal generation + combiner (BUY/SELL/HOLD logic)
+├── indicators/                <- technical indicator computation
+├── backtesting/               <- backtest engine
+├── ml/                        <- TimesFM runtime + benchmark (optional)
+├── config/                    <- settings.py + overrides.py
+├── data/                      <- fetched/cached market data
+├── scripts/                   <- utility scripts
+├── tests/                     <- pytest suite (+ conftest.py)
+├── docs/ / README.md / ROADMAP.md  <- friend's original documentation
+├── database/
+│   └── tickets.db             <- auto-created by simplex_mind ticket system (gitignored)
+└── testing/                   <- manual test checklists
+```
+
+---
+
+## Guardrails
+
+- Git identity must be `simplex5` — verify before any commit or push.
+- Never push to `upstream` (the friend's repo). Pushes go to `origin` only, and only when the user asks.
+- Never commit `database/` (brain ticket DB) — it is gitignored; keep it that way.
+- Respect the existing code style and structure — this is inherited code; prefer minimal,
+  surgical changes over rewrites until the codebase is well understood.
+- yfinance is unauthenticated scraping-adjacent — don't add loops that hammer it; keep
+  request volume near what the app already does.
+- Run `pytest tests/` before reporting any change to signals/indicators/backtesting as done.
+
+*(Add new guardrails as mistakes happen. Keep this under 10 items.)*
