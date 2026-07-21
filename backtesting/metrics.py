@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 
-from backtesting.report import BacktestReport, Trade
+from backtesting.report import BacktestReport
 from config.settings import MIN_TRADES_FOR_SHARPE, RISK_FREE_RATE_ANNUAL
 
 

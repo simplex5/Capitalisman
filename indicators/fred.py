@@ -19,7 +19,6 @@ import os
 import time
 from typing import Any
 
-import numpy as np
 import pandas as pd
 
 from indicators._utils import align_to_index

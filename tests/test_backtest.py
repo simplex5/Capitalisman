@@ -1,6 +1,5 @@
 """Tests for backtesting engine and metrics."""
 
-import numpy as np
 import pandas as pd
 import pytest
 

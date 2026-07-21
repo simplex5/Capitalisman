@@ -113,12 +113,14 @@ from your base Python installation:
 
 ```bash
 conda env create -f environment-timesfm.yml
-conda run -n capitalisman-timesfm python -m pip install \
-  torch --index-url https://download.pytorch.org/whl/cu128
 conda run -n capitalisman-timesfm python -m pip install -r requirements-timesfm.txt
+conda run -n capitalisman-timesfm python -m pip install --force-reinstall \
+  torch --index-url https://download.pytorch.org/whl/cu128
 ```
 
-Use the appropriate PyTorch CUDA wheel for your GPU and driver. On first use,
+Use the appropriate PyTorch CUDA wheel for your GPU and driver. The CUDA wheel
+is installed **last** (with `--force-reinstall`) because the `timesfm[torch]`
+extra would otherwise replace it with the default CPU build. On first use,
 model weights are downloaded from Hugging Face and cached locally. Without a
 compatible runtime, the indicator returns HOLD and displays the precise preflight
 error; all other indicators continue to work. See [`docs/TIMESFM.md`](docs/TIMESFM.md)
@@ -360,10 +362,13 @@ Capitalisman/
 │   └── page_screener.py        # Screener page (with CSV export & persistent watchlists)
 └── tests/
     ├── conftest.py             # Test fixtures & synthetic OHLCV data factory
-    ├── test_indicators.py      # Indicator computation & signal tests
+    ├── test_indicators.py      # Indicator computation & signal tests (parametrized over all indicators)
+    ├── test_indicator_utils.py # Cross-asset reference fetch utilities
     ├── test_combiner.py        # Signal combination logic tests
     ├── test_backtest.py        # Backtest engine & metrics tests
-    └── test_fetcher.py         # Data fetcher utility tests
+    ├── test_fetcher.py         # Data fetcher utility tests
+    ├── test_timesfm_runtime.py # TimesFM runtime adapter tests (injected fakes)
+    └── test_timesfm_benchmark.py # TimesFM rolling benchmark tests
 ```
 
 ## Dependencies
@@ -392,7 +397,9 @@ pip install -r requirements-dev.txt
 python -m pytest tests/ -v
 ```
 
-The suite currently contains 196 tests and uses synthetic OHLCV data for core
+The suite currently collects 218 tests (`pytest --collect-only`; a large share
+comes from a generic suite parametrized over every registered indicator, so the
+count moves when indicators are added) and uses synthetic OHLCV data for core
 behavior. Cross-asset indicators (Copper-Gold Ratio, VIX Term Structure, Market
 Correlation) may attempt to fetch live reference data; without network access,
 they gracefully fall back to HOLD with zero confidence. FRED Macro behaves the

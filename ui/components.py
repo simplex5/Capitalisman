@@ -6,7 +6,6 @@ import os
 import streamlit as st
 
 from config.settings import (
-    DEFAULT_BACKTEST_PERIOD,
     DEFAULT_COST_PER_TRADE_PCT,
     DEFAULT_INDICATORS,
     DEFAULT_INITIAL_CAPITAL,
