@@ -16,6 +16,12 @@ _reference_cache: dict[str, "pd.Series | None"] = {}
 def fetch_reference_close(ticker: str, period: str = "2y") -> "pd.Series | None":
     """Fetch close prices for a reference ticker with in-process caching.
 
+    References are fetched unadjusted (auto_adjust=False) so historical values
+    are point-in-time stable: dividend adjustment bakes *future* dividends into
+    past bars, which is look-ahead in backtests. The remaining split scaling is
+    a constant factor that cancels in every downstream use (ratios against own
+    SMAs, pct_change, correlations).
+
     Returns None on any failure (network, invalid ticker, etc.).
     """
     cache_key = f"{ticker}_{period}"
@@ -24,7 +30,7 @@ def fetch_reference_close(ticker: str, period: str = "2y") -> "pd.Series | None"
     try:
         import yfinance as yf
 
-        df = yf.Ticker(ticker).history(period=period)
+        df = yf.Ticker(ticker).history(period=period, auto_adjust=False)
         if df is not None and not df.empty and "Close" in df.columns:
             result = df["Close"]
             _reference_cache[cache_key] = result
@@ -50,6 +56,10 @@ def align_to_index(
 
     Handles timezone mismatches by normalising both sides to tz-naive dates.
     Returns all-NaN series when *series* is None.
+
+    Known limitation: for 24/7 target calendars (crypto), equity references
+    forward-fill across weekends/holidays, so their pct_change is 0 on those
+    days — correlation-based indicators are damped for crypto targets.
     """
     if series is None:
         return pd.Series(np.nan, index=target_index)
