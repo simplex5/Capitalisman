@@ -8,6 +8,7 @@ from pathlib import Path
 import os
 import shutil
 import sys
+import threading
 from typing import Callable
 
 import numpy as np
@@ -93,6 +94,9 @@ class TimesFMRuntime:
         self._model_factory = model_factory
         self._model = None
         self._status: TimesFMRuntimeStatus | None = None
+        # Streamlit serves sessions from multiple threads; without a lock two
+        # sessions can double-load the multi-GB model or race on _status.
+        self._load_lock = threading.Lock()
 
     @property
     def status(self) -> TimesFMRuntimeStatus:
@@ -174,7 +178,12 @@ class TimesFMRuntime:
     def load(self) -> TimesFMRuntimeStatus:
         if self._model is not None:
             return self.status
+        with self._load_lock:
+            if self._model is not None:  # lost the race — another thread loaded
+                return self.status
+            return self._load_locked()
 
+    def _load_locked(self) -> TimesFMRuntimeStatus:
         if self._model_factory is not None:
             status = TimesFMRuntimeStatus(
                 "ready", "Injected model is ready", self.config.device, "test"
@@ -196,6 +205,17 @@ class TimesFMRuntime:
                 self._model = timesfm.TimesFM_2p5_200M_torch.from_pretrained(
                     self.config.model_id
                 )
+                # Place the model on the preflight-resolved device explicitly
+                # rather than trusting library defaults; the wrapper may manage
+                # its own placement, so failures are tolerated and the real
+                # device is read back below for truthful reporting.
+                target_device = status.resolved_device
+                mover = getattr(self._model, "to", None)
+                if callable(mover) and target_device:
+                    try:
+                        mover(target_device)
+                    except Exception:
+                        pass
                 self._model.compile(
                     timesfm.ForecastConfig(
                         max_context=self.config.max_context,
@@ -210,6 +230,9 @@ class TimesFMRuntime:
                 )
             self._status.state = "loaded"
             self._status.message = "TimesFM model loaded successfully"
+            actual_device = self._model_device()
+            if actual_device is not None:
+                self._status.resolved_device = actual_device
         except Exception as error:
             self._model = None
             status.state = "failed"
@@ -218,6 +241,34 @@ class TimesFMRuntime:
             raise RuntimeError(status.message) from error
 
         return self._status
+
+    def _model_device(self) -> str | None:
+        """Read the device the loaded model actually lives on."""
+        params = getattr(self._model, "parameters", None)
+        if not callable(params):
+            return None
+        try:
+            first = next(iter(params()), None)
+            return first.device.type if first is not None else None
+        except Exception:
+            return None
+
+    def unload(self) -> None:
+        """Release the model reference and any GPU memory it holds."""
+        with self._load_lock:
+            if self._model is None:
+                return
+            self._model = None
+            try:
+                import torch
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except ImportError:
+                pass
+            if self._status is not None and self._status.state == "loaded":
+                self._status.state = "ready"
+                self._status.message = "Model unloaded; dependencies remain ready"
 
     def forecast(self, inputs: list[np.ndarray], horizon: int) -> list[TimesFMForecast]:
         if horizon < 1 or horizon > self.config.max_horizon:
@@ -271,15 +322,22 @@ class TimesFMRuntime:
 
 
 _runtime: TimesFMRuntime | None = None
+_runtime_lock = threading.Lock()
 
 
 def get_timesfm_runtime(config: TimesFMRuntimeConfig | None = None) -> TimesFMRuntime:
     global _runtime
-    if _runtime is None or (config is not None and _runtime.config != config):
-        _runtime = TimesFMRuntime(config)
-    return _runtime
+    with _runtime_lock:
+        if _runtime is None or (config is not None and _runtime.config != config):
+            if _runtime is not None:
+                _runtime.unload()  # don't orphan a loaded model in VRAM
+            _runtime = TimesFMRuntime(config)
+        return _runtime
 
 
 def reset_timesfm_runtime() -> None:
     global _runtime
-    _runtime = None
+    with _runtime_lock:
+        if _runtime is not None:
+            _runtime.unload()
+        _runtime = None

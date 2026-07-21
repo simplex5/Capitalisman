@@ -88,3 +88,25 @@ def test_timesfm_indicator_is_excluded_from_backtests():
 
     indicator = TimesFMForecast(runtime=TimesFMRuntime(model_factory=FakeTimesFMModel))
     assert indicator.backtest_safe is False
+
+
+def test_unload_releases_model_and_resets_status():
+    runtime = TimesFMRuntime(model_factory=FakeTimesFMModel)
+    runtime.forecast([np.arange(1, 101, dtype=float)], horizon=5)
+    assert runtime._model is not None
+    runtime.unload()
+    assert runtime._model is None
+    # A later forecast lazily reloads without error
+    result = runtime.forecast([np.arange(1, 101, dtype=float)], horizon=5)
+    assert result[0].point.shape == (5,)
+
+
+def test_reset_singleton_unloads_old_model():
+    from ml.timesfm_runtime import get_timesfm_runtime, reset_timesfm_runtime
+
+    reset_timesfm_runtime()
+    first = get_timesfm_runtime()
+    assert get_timesfm_runtime() is first
+    reset_timesfm_runtime()
+    assert get_timesfm_runtime() is not first
+    reset_timesfm_runtime()
