@@ -12,14 +12,14 @@ st.set_page_config(
 # Importing indicators triggers auto-registration via indicators/__init__.py
 import indicators  # noqa: F401, E402
 
-from ui import page_predict, page_backtest, page_explore  # noqa: E402
+from ui import page_predict, page_backtest, page_simulator, page_explore  # noqa: E402
 from ui import page_search, page_compare, page_screener  # noqa: E402
 
 # Sidebar navigation
 st.sidebar.title("Capitalisman")
 page = st.sidebar.radio(
     "Navigation",
-    ["Predict", "Backtest", "Explore", "Search", "Compare", "Screener"],
+    ["Predict", "Backtest", "Simulator", "Explore", "Search", "Compare", "Screener"],
     key="nav_page",
     label_visibility="collapsed",
 )
@@ -30,6 +30,8 @@ if page == "Predict":
     page_predict.render()
 elif page == "Backtest":
     page_backtest.render()
+elif page == "Simulator":
+    page_simulator.render()
 elif page == "Explore":
     page_explore.render()
 elif page == "Search":

@@ -154,13 +154,53 @@ workflow that explains:
 
 ### Strategy Workflows
 
-- [ ] Introduce a formal strategy configuration model.
-- [ ] Add presets such as Conservative Trend, Short-Term Momentum, Macro Risk,
-      and Crypto 24/7.
+- [x] Introduce an immutable strategy configuration model for causal,
+      single-asset historical simulation.
+- [ ] Expand the initial Buy & Hold, Balanced Technical, Trend Following, and
+      Mean Reversion simulator presets with Conservative Trend, Short-Term
+      Momentum, Macro Risk, and Crypto 24/7 after their execution assumptions
+      are defined.
 - [ ] Allow named strategies to be saved, duplicated, edited, and restored.
 - [ ] Keep ticker, period, horizon, and strategy synchronized between pages.
 - [ ] Add a guided first-run workflow for less experienced users.
 - [ ] Export complete research reports in addition to raw CSV files.
+
+### Historical Replay Simulator
+
+#### MVP Foundation — Completed
+
+- [x] Add a Streamlit-independent daily-bar replay engine with deterministic
+      `step` and bounded `advance` operations.
+- [x] Model one all-in long position or cash, mark open holdings to every close,
+      and charge an explicit percentage cost on each fill.
+- [x] Enforce close-to-next-open execution so decisions cannot use an unseen
+      bar's open or close.
+- [x] Support drop-in and end-date normalization, latest-data and duration
+      endpoints, fixed-dollar and percentage-return goals, and capital-depletion
+      termination.
+- [x] Support pausing and prospective strategy changes while preserving the
+      current holding and cancelling stale pending orders.
+- [x] Record an append-only event ledger plus immutable portfolio snapshots for
+      audit and deterministic replay tests.
+- [x] Add a Simulator page with preset/custom setup, manual stepping, bounded
+      1/2/5/10/25/50/100-bar advances, charts, metrics, and event inspection.
+
+#### Simulator Expansion
+
+- [ ] Add wall-clock autoplay with responsive pause controls and configurable
+      animation cadence; keep speed separate from the number of market bars.
+- [ ] Persist, resume, export, and import versioned simulation runs and strategy
+      definitions.
+- [ ] Add end-of-run comparisons against buy-and-hold and other presets on the
+      identical resolved date range.
+- [ ] Add custom success-condition composition, drawdown/risk goals, scorecards,
+      achievements, and richer explanations without changing core accounting.
+- [ ] Add partial allocation, position sizing, shorting, margin, dividends,
+      corporate actions, stops, multi-asset portfolios, and intraday execution
+      only as separately validated execution-model layers.
+- [ ] Admit TimesFM, FRED, and cross-asset strategies only when every historical
+      input is point-in-time reproducible and unavailable observations fail
+      explicitly rather than silently becoming neutral signals.
 
 ## Research Quality
 
