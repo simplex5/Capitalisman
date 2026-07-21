@@ -17,6 +17,13 @@ from ui import page_search, page_compare, page_screener  # noqa: E402
 
 # Sidebar navigation
 st.sidebar.title("Capitalisman")
+
+# Cross-page "View"/"Analyze" buttons request navigation via nav_request; the
+# widget key itself may only be written before the radio is instantiated
+# (writing it from a callback raises StreamlitAPIException on newer versions).
+if "nav_request" in st.session_state:
+    st.session_state["nav_page"] = st.session_state.pop("nav_request")
+
 page = st.sidebar.radio(
     "Navigation",
     ["Predict", "Backtest", "Explore", "Search", "Compare", "Screener"],

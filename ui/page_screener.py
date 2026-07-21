@@ -217,7 +217,7 @@ def render():
 
             def _go_predict(ticker=r["ticker"]):
                 st.session_state["predict_ticker"] = ticker
-                st.session_state["nav_page"] = "Predict"
+                st.session_state["nav_request"] = "Predict"
 
             st.button(
                 "View",

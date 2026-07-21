@@ -75,7 +75,7 @@ def render():
 
             def _analyze(sym=symbol):
                 st.session_state["predict_ticker"] = sym
-                st.session_state["nav_page"] = "Predict"
+                st.session_state["nav_request"] = "Predict"
 
             st.button("Analyze", key=f"analyze_{i}_{symbol}", on_click=_analyze)
 
