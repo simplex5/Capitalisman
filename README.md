@@ -44,6 +44,24 @@ You'll see:
 
 Backtests include **configurable transaction costs** (slippage and commissions, default 0.1% per trade). Signals are evaluated at a bar's close, entered at the next bar's open, and exited at the close after the selected number of bars. Revised FRED series are excluded because the integration does not provide point-in-time vintages. Short positions are modeled without borrow costs.
 
+### Simulator — Replay a Strategy from a Historical Date
+
+The Simulator is a deliberately constrained, game-like historical replay. Pick
+a ticker, drop-in date, starting capital, endpoint, optional success goal, and
+one of four presets—or build a custom weighted technical strategy. Reveal one
+daily bar at a time or advance deterministic batches of 1, 2, 5, 10, 25, 50,
+or 100 bars. Pause before switching strategy; an existing holding is preserved,
+while any unfilled order from the old strategy is cancelled.
+
+The MVP uses one ticker, one all-in long position or cash, and no shorting or
+margin. Decisions use only completed closes and fill at the next open. The
+portfolio is marked to every revealed close, costs are charged independently on
+each buy or sell fill, and every order, strategy change, goal, and state change
+is recorded in an event ledger. TimesFM, FRED, and cross-asset indicators are
+excluded until their historical inputs can be reproduced safely. Continuous
+wall-clock animation, saved runs, and more complex portfolio rules are tracked
+in [`ROADMAP.md`](ROADMAP.md).
+
 ### Search — Find Any Ticker
 
 Don't know the exact Yahoo Finance symbol? The Search page lets you type a company name, keyword, or partial symbol and browse matching results. Each result shows the symbol, full name, exchange, and asset type. Click **Analyze** on any result to jump straight to the Predict page with that ticker loaded.
@@ -131,6 +149,11 @@ for health checks, configuration, interpretation, and point-in-time benchmarking
 - Uses the official TimesFM 2.5 PyTorch API with lazy model loading.
 - Detects CUDA availability, package compatibility, memory, and disk space before
   attempting inference.
+- Selects hardware-aware Fast, Balanced, and Thorough runtime profiles from free
+  VRAM and workload type, while keeping performance settings separate from
+  predictive methodology.
+- Includes an opt-in empirical throughput probe for choosing a safe workload
+  chunk size on the installed GPU and software stack.
 - Produces horizon-aware point and quantile forecasts rather than a single fixed
   10-day estimate.
 - Displays median return, q10/q90 range, probability of an upward move, and
@@ -165,13 +188,15 @@ failure instead of disappearing or presenting the ensemble HOLD as a model resul
 
 2. **Run a backtest** — Switch to Backtest, type `AAPL`, pick "1y", keep the 5-bar horizon, and click **Run Backtest**. Warmup history is fetched separately so the reported evaluation remains bounded to the selected period.
 
-3. **Search for a ticker** — Switch to the Search page. Type "Tesla" and you'll see matching results. Click **Analyze** on `TSLA` to jump to the Predict page with it loaded.
+3. **Replay a strategy** — Switch to Simulator, choose a historical drop-in date and a strategy, then create the replay. Use **Step one bar** for inspection or resume batch mode and advance a selected number of bars.
 
-4. **Compare two tickers** — Switch to the Compare page. The defaults are AAPL and MSFT. You'll see a normalized price chart, side-by-side signals, and their correlation.
+4. **Search for a ticker** — Switch to the Search page. Type "Tesla" and you'll see matching results. Click **Analyze** on `TSLA` to jump to the Predict page with it loaded.
 
-5. **Screen a watchlist** — Switch to the Screener page. Select "Tech Giants" from the dropdown and click **Scan Watchlist**. You'll get a ranked table of all 7 tickers sorted by directional agreement.
+5. **Compare two tickers** — Switch to the Compare page. The defaults are AAPL and MSFT. You'll see a normalized price chart, side-by-side signals, and their correlation.
 
-6. **Explore a chart** — Switch to the Explore page. Try `BTC-USD` (Bitcoin) and toggle different indicators on and off to see how they overlay on the price chart.
+6. **Screen a watchlist** — Switch to the Screener page. Select "Tech Giants" from the dropdown and click **Scan Watchlist**. You'll get a ranked table of all 7 tickers sorted by directional agreement.
+
+7. **Explore a chart** — Switch to the Explore page. Try `BTC-USD` (Bitcoin) and toggle different indicators on and off to see how they overlay on the price chart.
 
 ### What Tickers Can I Use?
 

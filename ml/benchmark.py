@@ -68,8 +68,8 @@ def benchmark_close_series(
     clean = close.dropna().astype(float)
     if horizon < 1:
         raise ValueError("horizon must be positive")
-    if min_context < 2:
-        raise ValueError("min_context must be at least 2")
+    if min_context < 32:
+        raise ValueError("min_context must be at least 32 for TimesFM")
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
     if len(clean) < min_context + horizon:

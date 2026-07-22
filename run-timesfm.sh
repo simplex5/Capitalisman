@@ -3,6 +3,9 @@
 # Falls back to the plain app venv when the ML environment is not installed.
 # All CAPITALISMAN_TIMESFM_* values can be overridden per-launch, e.g.:
 #   CAPITALISMAN_TIMESFM_MAX_CONTEXT=1024 ./run-timesfm.sh
+# Note: the in-app TimesFM Runtime Profile picker rebuilds the runtime config
+# from detected hardware, so these env values govern scripts/benchmarks and
+# non-UI paths; in the UI only MODEL_ID and DEVICE=cpu are honored.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -10,6 +13,9 @@ TIMESFM_ENV="${TIMESFM_ENV:-$HOME/.venvs/capitalisman-timesfm}"
 
 if [ -x "$TIMESFM_ENV/bin/streamlit" ]; then
     export CAPITALISMAN_TIMESFM_MAX_CONTEXT="${CAPITALISMAN_TIMESFM_MAX_CONTEXT:-8192}"
+    # forecast_context defaults to 1024 upstream and effective context is
+    # min(forecast_context, max_context) — follow MAX_CONTEXT unless overridden.
+    export CAPITALISMAN_TIMESFM_FORECAST_CONTEXT="${CAPITALISMAN_TIMESFM_FORECAST_CONTEXT:-$CAPITALISMAN_TIMESFM_MAX_CONTEXT}"
     export CAPITALISMAN_TIMESFM_BATCH_SIZE="${CAPITALISMAN_TIMESFM_BATCH_SIZE:-128}"
     export CAPITALISMAN_TIMESFM_DEVICE="${CAPITALISMAN_TIMESFM_DEVICE:-cuda}"
     export PYTHONNOUSERSITE=1
