@@ -1,6 +1,7 @@
 """Probabilistic TimesFM 2.5 price forecast indicator."""
 
 from dataclasses import dataclass
+from itertools import chain, islice
 from typing import Any
 
 import numpy as np
@@ -98,32 +99,42 @@ class TimesFMForecast(BaseIndicator):
         if not historical and self.runtime.config.use_case in {"interactive", "watchlist"}:
             origins = [len(result) - 1]
         else:
-            origins = list(
-                range(MIN_CONTEXT - 1, len(result), max(1, horizon_days))
-            )
+            origins = range(MIN_CONTEXT - 1, len(result), max(1, horizon_days))
             if not historical and origins[-1] != len(result) - 1:
-                origins.append(len(result) - 1)
-        contexts = [
-            result["Close"].iloc[: origin + 1].to_numpy(dtype=np.float32)
-            for origin in origins
-        ]
+                origins = chain(origins, [len(result) - 1])
 
-        try:
-            forecasts = self.runtime.forecast(contexts, horizon=horizon_days)
-        except (RuntimeError, ValueError) as error:
-            self.last_error = str(error)
-            return result
+        context_length = self.runtime.config.effective_context
+        origin_iterator = iter(origins)
+        while batch_origins := list(islice(origin_iterator, self.runtime.config.chunk_size)):
+            # Cap before dtype conversion, and retain only one inference batch.
+            contexts = [
+                result["Close"].iloc[max(0, origin + 1 - context_length):origin + 1]
+                .to_numpy(dtype=np.float32)
+                for origin in batch_origins
+            ]
+            try:
+                forecasts = self.runtime.forecast(contexts, horizon=horizon_days)
+            except (RuntimeError, ValueError) as error:
+                self.last_error = str(error)
+                if historical:
+                    # Failed inference must not become a successful cash-only run.
+                    raise
+                # A later batch failure must not expose partial predictions.
+                self._initialize_columns(result)
+                self.latest_analysis = None
+                return result
 
-        for origin, forecast in zip(origins, forecasts):
-            analysis = self._analyze_forecast(
-                forecast,
-                current_price=float(result["Close"].iloc[origin]),
-                origin=result.index[origin],
-                cost_per_trade_pct=cost_per_trade_pct,
-            )
-            self._write_analysis(result, origin, analysis)
-            if origin == len(result) - 1:
-                self.latest_analysis = analysis
+            for origin, forecast in zip(batch_origins, forecasts):
+                analysis = self._analyze_forecast(
+                    forecast,
+                    current_price=float(result["Close"].iloc[origin]),
+                    origin=result.index[origin],
+                    cost_per_trade_pct=cost_per_trade_pct,
+                )
+                self._write_analysis(result, origin, analysis)
+                if origin == len(result) - 1:
+                    self.latest_analysis = analysis
+            del contexts, forecasts
 
         return result
 

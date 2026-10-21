@@ -238,3 +238,95 @@ def test_replacing_singleton_unloads_old_runtime(monkeypatch):
     new = module.get_timesfm_runtime(TimesFMRuntimeConfig(device="cpu"))
     assert new is not old
     assert old._model is None
+
+
+def test_backend_selection_is_explicit_and_captured(monkeypatch):
+    assert TimesFMRuntimeConfig().backend == "2.5"
+    monkeypatch.setenv("CAPITALISMAN_TIMESFM_BACKEND", "3.0")
+    config = TimesFMRuntimeConfig.from_environment()
+    assert config.model_id == "google/timesfm-3.0-pytorch"
+    assert not config.torch_compile
+    with pytest.raises(ValueError, match="does not match"):
+        TimesFMRuntimeConfig(backend="3.0", model_id="google/timesfm-2.5-200m-pytorch")
+    with pytest.raises(ValueError, match="backend"):
+        TimesFMRuntimeConfig(backend="unknown")
+    with pytest.raises(ValueError, match="15360"):
+        TimesFMRuntimeConfig(backend="3.0", max_context=16384)
+
+
+@pytest.fixture
+def fake_v3(fake_dependencies, monkeypatch):
+    class Evaluator:
+        def __init__(self, config):
+            self.config = config
+            config.quantiles = [i / 10 for i in range(1, 10)]
+            self.device = config.device
+            self.global_context = 15360
+            self.tensor = SimpleNamespace(device=self.device)
+            self.model = SimpleNamespace(parameters=lambda: iter([self.tensor]), buffers=lambda: iter([]))
+            self.calls = []
+
+        def predict_batch(self, contexts, horizon, **kwargs):
+            self.calls.append((contexts, kwargs))
+            for values in contexts:
+                point = np.repeat(values[-1], horizon)
+                yield SimpleNamespace(forecast=point, quantiles=point[:, None] * np.linspace(.8, 1.2, 9))
+
+    monkeypatch.setitem(sys.modules, "timesfm3", SimpleNamespace(
+        TimesFM3Evaluator=Evaluator, ModelConfig=lambda **kwargs: SimpleNamespace(**kwargs),
+    ))
+    monkeypatch.setattr("ml.timesfm_runtime.metadata.version", lambda _: "3.0.2")
+    return Evaluator
+
+
+@pytest.mark.parametrize("device,expected", [("cpu", "cpu"), ("cuda", "cuda:0")])
+def test_v3_production_adapter_maps_deciles_and_verifies_device(fake_v3, device, expected):
+    runtime = TimesFMRuntime(TimesFMRuntimeConfig(backend="3.0", device=device, chunk_size=2))
+    runtime.load = REAL_LOAD.__get__(runtime)
+    results = runtime.forecast([np.arange(40.) + i for i in range(3)], horizon=5)
+    assert runtime.status.backend == "3.0"
+    assert runtime.status.model_device == expected
+    assert [len(call[0]) for call in runtime._model.forecaster.calls] == [2, 1]
+    for i, result in enumerate(results):
+        assert result.terminal_point == 39 + i
+        assert result.terminal_quantile(.5) == result.terminal_point
+        assert result.terminal_quantile(.1) == pytest.approx((39 + i) * .8)
+        assert result.terminal_quantile(.9) == pytest.approx((39 + i) * 1.2)
+    runtime._model.forecaster.tensor.device = "wrong"
+    with pytest.raises(RuntimeError, match="device mismatch"):
+        runtime.forecast([np.arange(40.)], 5)
+    runtime.unload()
+    assert runtime._model is None
+
+
+@pytest.mark.parametrize("problem", ["count", "shape", "nan", "crossing", "oom"])
+def test_v3_rejects_invalid_or_failed_inference(fake_v3, monkeypatch, problem):
+    def predict(self, contexts, horizon, **kwargs):
+        if problem == "oom":
+            raise RuntimeError("out of memory")
+        point = np.ones(horizon)
+        quantiles = np.ones((horizon, 9))
+        if problem == "count":
+            return []
+        if problem == "shape":
+            quantiles = quantiles[:, :8]
+        if problem == "nan":
+            point[-1] = np.nan
+        if problem == "crossing":
+            quantiles[:, 0] = 2
+        return [SimpleNamespace(forecast=point, quantiles=quantiles)]
+    monkeypatch.setattr(fake_v3, "predict_batch", predict)
+    runtime = TimesFMRuntime(TimesFMRuntimeConfig(backend="3.0", device="cpu"))
+    runtime.load = REAL_LOAD.__get__(runtime)
+    with pytest.raises(RuntimeError):
+        runtime.forecast([np.arange(40.)], 5)
+    if problem == "oom":
+        assert runtime._model is None
+        assert runtime.status.state == "out_of_memory"
+
+
+def test_v3_missing_api_does_not_fall_back_to_25(fake_dependencies, monkeypatch):
+    monkeypatch.setitem(sys.modules, "timesfm3", SimpleNamespace())
+    runtime = TimesFMRuntime(TimesFMRuntimeConfig(backend="3.0"))
+    assert runtime.preflight().state == "incompatible"
+    assert "3.0" in runtime.status.message

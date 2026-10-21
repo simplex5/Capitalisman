@@ -6,7 +6,7 @@ import json
 
 import numpy as np
 
-from ml.timesfm_runtime import TimesFMRuntime, TimesFMRuntimeConfig
+from ml.timesfm_runtime import BACKEND_MODEL_IDS, TimesFMRuntime, TimesFMRuntimeConfig
 from ml.timesfm_autotune import autotune_runtime
 from ml.timesfm_profiles import (
     PROFILE_PREFERENCES,
@@ -19,6 +19,7 @@ from ml.timesfm_profiles import (
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto")
+    parser.add_argument("--backend", choices=BACKEND_MODEL_IDS, default="2.5")
     parser.add_argument("--profile", choices=PROFILE_PREFERENCES, default="auto")
     parser.add_argument("--use-case", choices=USE_CASES, default="interactive")
     parser.add_argument("--smoke", action="store_true", help="Load weights and forecast")
@@ -37,7 +38,7 @@ def main() -> int:
         print(json.dumps({"error": "CUDA requested but no CUDA device was detected"}, indent=2))
         return 1
     profile = select_runtime_profile(hardware, args.use_case, args.profile)
-    runtime = TimesFMRuntime(replace(TimesFMRuntimeConfig.from_profile(profile),
+    runtime = TimesFMRuntime(replace(TimesFMRuntimeConfig.from_profile(profile, backend=args.backend),
                                     device=args.device, torch_compile=not args.no_torch_compile))
     status = runtime.preflight()
     print(

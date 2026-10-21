@@ -24,7 +24,10 @@ def main():
         if isinstance(asset, dict) and isinstance(asset.get("input"), str):
             asset["input"] = str((args.protocol.resolve().parent / asset["input"]).resolve())
     result = run_suite(protocol, args.output_dir)
-    print(json.dumps({"status": result["status"], "summary": str(args.output_dir / "summary.json")}, indent=2))
+    paths = {"status": result["status"], "summary": str(args.output_dir / "summary.json")}
+    if (args.output_dir / "comparison.html").exists():
+        paths["comparison"] = str(args.output_dir / "comparison.html")
+    print(json.dumps(paths, indent=2))
     return 0 if result["status"] == "completed" else 1
 
 

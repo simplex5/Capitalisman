@@ -7,7 +7,7 @@ import pandas as pd
 
 from data.fetcher import fetch_ohlcv
 from ml.benchmark import benchmark_close_series
-from ml.timesfm_runtime import TimesFMRuntime, TimesFMRuntimeConfig
+from ml.timesfm_runtime import BACKEND_MODEL_IDS, TimesFMRuntime, TimesFMRuntimeConfig
 from research.artifacts import build_archive
 from research.data import completed_daily_bars
 
@@ -21,6 +21,7 @@ def main() -> int:
     parser.add_argument("--min-context", type=int, default=128)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto")
+    parser.add_argument("--backend", choices=BACKEND_MODEL_IDS, default="2.5")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--test-start", required=True, help="First held-out forecast origin (ISO date)")
     parser.add_argument("--archive", type=Path, required=True, help="New .zip research archive")
@@ -39,7 +40,7 @@ def main() -> int:
     test_start = pd.Timestamp(args.test_start)
     if prices.index.tz is not None and test_start.tzinfo is None:
         test_start = test_start.tz_localize(prices.index.tz)
-    runtime = TimesFMRuntime(TimesFMRuntimeConfig(device=args.device))
+    runtime = TimesFMRuntime(TimesFMRuntimeConfig(device=args.device, backend=args.backend))
     result = benchmark_close_series(
         prices,
         runtime,

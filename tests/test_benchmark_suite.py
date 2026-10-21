@@ -113,3 +113,46 @@ def test_forecast_worker_uses_snapshot_and_records_intervals(protocol, tmp_path,
     result = summary["jobs"][0]["result"]
     assert result["observations"] > 0
     assert result["baseline_metrics"]["last_price"]["mae_improvement_interval"]["status"] == "estimated"
+
+
+def test_model_comparison_shares_inputs_and_costs_and_renders_results(protocol, tmp_path, monkeypatch):
+    from ml.timesfm_runtime import TimesFMRuntime
+    from tests.test_timesfm_runtime import FakeTimesFMModel
+    monkeypatch.setattr("ml.timesfm_runtime.TimesFMRuntime",
+                        lambda config: TimesFMRuntime(config, model_factory=FakeTimesFMModel))
+    def execute(path, timeout):
+        suite.run_worker(path)
+        return {"status": "completed", "exit_code": 0}
+    monkeypatch.setattr(suite, "_execute", execute)
+    root = tmp_path / "comparison"
+    summary = suite.run_suite({**protocol, "mode": "models", "cost_pct": .2}, root)
+    assert summary["status"] == "completed", summary
+    assert [j["backend"] for j in summary["jobs"]] == ["2.5", "3.0"]
+    archives = [load_archive((root / j["job"] / "result.zip").read_bytes()) for j in summary["jobs"]]
+    pd.testing.assert_frame_equal(archives[0]["frames"]["market"], archives[1]["frames"]["market"])
+    assert archives[0]["result"]["forecast"]["evaluations"] == archives[1]["result"]["forecast"]["evaluations"]
+    for saved, backend in zip(archives, ("2.5", "3.0")):
+        config = saved["configuration"]["strategies"]["combined"]
+        assert config["models"]["TimesFM Forecast"]["backend"] == backend
+        assert config["round_trip_cost_pct"] == .2
+        assert saved["result"]["summary"] == archives[0]["result"]["summary"]
+    html = (root / "comparison.html").read_text()
+    assert "Forecast median" in html and "Daily equity" in html
+    assert "Return MAE" in html and "non-production" in html
+    with pytest.raises(FileExistsError):
+        suite.run_suite({**protocol, "mode": "models"}, root)
+
+
+def test_model_comparison_retains_both_failures_without_inventing_results(protocol, tmp_path, monkeypatch):
+    monkeypatch.setattr(suite, "_execute", lambda *args: {"status": "failed", "exit_code": 1})
+    root = tmp_path / "failed"
+    summary = suite.run_suite({**protocol, "mode": "models"}, root)
+    assert summary["status"] == "incomplete"
+    assert len(summary["jobs"]) == 2
+    assert all("result" not in job for job in summary["jobs"])
+    assert "failed" in (root / "comparison.html").read_text()
+
+
+def test_model_comparison_counts_both_models_in_job_budget(protocol, tmp_path):
+    with pytest.raises(ValueError, match="2 jobs"):
+        suite.run_suite({**protocol, "mode": "models", "max_jobs": 1}, tmp_path / "invalid")

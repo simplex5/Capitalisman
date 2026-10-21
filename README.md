@@ -19,11 +19,13 @@ Built with Python and Streamlit, using market data from Yahoo Finance.
 - **Explore, Search, Compare, and Screener:** browse charts, find symbols,
   compare assets, and scan saved watchlists.
 - **Optional indicators:** FRED macro data, experimental cross-asset and
-  structural signals, and TimesFM 2.5 point and quantile forecasts with explicit
-  CPU/GPU selection.
+  structural signals, and TimesFM point and quantile forecasts with explicit
+  CPU/GPU selection. TimesFM 2.5 is the default; 3.0 is an experimental option
+  for non-commercial, non-production research.
 - **Research automation:** compare fixed strategies and forecast baselines;
   run bounded asset/horizon suites with saved inputs, time limits, failure
-  records, and exploratory forecast uncertainty intervals.
+  records, and exploratory forecast uncertainty intervals. Compare TimesFM
+  2.5 and 3.0 on frozen inputs with a local HTML report and interactive charts.
 
 Signals and model scores are uncalibrated research outputs. Historical results
 and bootstrap intervals do not establish a trading edge. There is no brokerage
@@ -84,6 +86,8 @@ python -m scripts.benchmark_suite --help
 - [Research workflow](docs/RESEARCH_WORKFLOW.md): accounting assumptions,
   artifacts, benchmarks, uncertainty, and dependency verification.
 - [TimesFM guide](docs/TIMESFM.md): optional model setup and operation.
+- [October 20 change record](docs/CHANGES_2026-10-20.md): implemented fixes,
+  experimental TimesFM 3.0, future testing instructions, and the AAPL comparison.
 - [Roadmap](ROADMAP.md): completed work and planned improvements.
 - [Correctness review status](CRITICAL_FIXES.md): fixes applied to the original review.
 

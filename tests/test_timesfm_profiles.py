@@ -6,6 +6,23 @@ from ml.timesfm_profiles import HardwareCapabilities, select_runtime_profile
 from ml.timesfm_runtime import TimesFMRuntimeConfig
 
 
+def test_available_ram_includes_reclaimable_linux_cache(monkeypatch):
+    from ml.timesfm_profiles import _available_ram_gb
+    from ml.timesfm_runtime import TimesFMRuntime
+    monkeypatch.setattr("pathlib.Path.read_text", lambda self: "MemFree: 1024 kB\nMemAvailable: 8388608 kB\n")
+    monkeypatch.setattr("os.sysconf", lambda key: 0)
+    assert _available_ram_gb() == 8
+    assert TimesFMRuntime._available_ram_gb() == 8
+
+
+def test_available_ram_falls_back_without_procfs(monkeypatch):
+    from ml.timesfm_profiles import _available_ram_gb
+    def unavailable(self):
+        raise OSError("No procfs")
+    monkeypatch.setattr("pathlib.Path.read_text", unavailable)
+    monkeypatch.setattr("os.sysconf", lambda key: {"SC_AVPHYS_PAGES": 524288, "SC_PAGE_SIZE": 4096}[key])
+    assert _available_ram_gb() == 2
+
 @pytest.mark.parametrize(
     ("free_vram", "tier", "batch"),
     [

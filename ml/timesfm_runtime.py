@@ -1,4 +1,4 @@
-"""TimesFM 2.5 runtime, preflight checks, and probabilistic forecast types."""
+"""Selectable TimesFM runtime, preflight checks, and probabilistic forecast types."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from functools import wraps
 from itertools import chain
 from threading import RLock
 import gc
+import importlib
 import os
 import shutil
 import sys
@@ -16,16 +17,17 @@ from typing import Callable
 
 import numpy as np
 
-from ml.timesfm_profiles import TimesFMProfile
+from ml.timesfm_profiles import TimesFMProfile, _available_ram_gb as available_ram_gb
 
 
 DEFAULT_MODEL_ID = "google/timesfm-2.5-200m-pytorch"
+BACKEND_MODEL_IDS = {"2.5": DEFAULT_MODEL_ID, "3.0": "google/timesfm-3.0-pytorch"}
 QUANTILE_LEVELS = tuple(round(level / 10, 1) for level in range(1, 10))
 
 
 @dataclass(frozen=True)
 class TimesFMRuntimeConfig:
-    model_id: str = DEFAULT_MODEL_ID
+    model_id: str | None = None
     device: str = "auto"
     max_context: int = 1024
     forecast_context: int | None = None
@@ -36,12 +38,24 @@ class TimesFMRuntimeConfig:
     profile_name: str = "custom"
     use_case: str = "interactive"
     torch_compile: bool = True
+    backend: str = "2.5"
 
     @property
     def effective_context(self) -> int:
         return min(self.forecast_context or self.max_context, self.max_context)
 
     def __post_init__(self) -> None:
+        if self.backend not in BACKEND_MODEL_IDS:
+            raise ValueError("TimesFM backend must be 2.5 or 3.0")
+        if self.model_id is None:
+            object.__setattr__(self, "model_id", BACKEND_MODEL_IDS[self.backend])
+        elif self.model_id in BACKEND_MODEL_IDS.values() and self.model_id != BACKEND_MODEL_IDS[self.backend]:
+            raise ValueError("TimesFM model_id does not match the selected backend")
+        if self.backend == "3.0":
+            # The experimental adapter uses upstream eager inference only.
+            object.__setattr__(self, "torch_compile", False)
+            if self.effective_context > 15360:
+                raise ValueError("TimesFM 3.0 supports at most 15360 context bars")
         if self.max_context < 32:
             raise ValueError("TimesFM max_context must be at least 32")
         if self.effective_context < 32:
@@ -57,7 +71,8 @@ class TimesFMRuntimeConfig:
     def from_environment(cls) -> "TimesFMRuntimeConfig":
         """Build runtime settings from optional CAPITALISMAN_TIMESFM_* variables."""
         return cls(
-            model_id=os.getenv("CAPITALISMAN_TIMESFM_MODEL_ID", DEFAULT_MODEL_ID),
+            model_id=os.getenv("CAPITALISMAN_TIMESFM_MODEL_ID"),
+            backend=os.getenv("CAPITALISMAN_TIMESFM_BACKEND", "2.5"),
             device=os.getenv("CAPITALISMAN_TIMESFM_DEVICE", "auto"),
             max_context=int(os.getenv("CAPITALISMAN_TIMESFM_MAX_CONTEXT", "1024")),
             forecast_context=int(
@@ -74,9 +89,10 @@ class TimesFMRuntimeConfig:
         )
 
     @classmethod
-    def from_profile(cls, profile: TimesFMProfile) -> "TimesFMRuntimeConfig":
+    def from_profile(cls, profile: TimesFMProfile, backend: str | None = None) -> "TimesFMRuntimeConfig":
         return cls(
-            model_id=os.getenv("CAPITALISMAN_TIMESFM_MODEL_ID", DEFAULT_MODEL_ID),
+            model_id=os.getenv("CAPITALISMAN_TIMESFM_MODEL_ID") if backend is None else None,
+            backend=backend or os.getenv("CAPITALISMAN_TIMESFM_BACKEND", "2.5"),
             device=profile.device,
             max_context=profile.max_context,
             forecast_context=profile.forecast_context,
@@ -105,6 +121,7 @@ class TimesFMRuntimeStatus:
     available_ram_gb: float | None = None
     free_disk_gb: float | None = None
     model_device: str | None = None
+    backend: str = "2.5"
 
 
 class ForecastCancelled(RuntimeError):
@@ -152,7 +169,7 @@ def probability_above(forecast: TimesFMForecast, threshold: float) -> float:
 
 
 class TimesFMRuntime:
-    """Lazy TimesFM 2.5 runtime with explicit status and dependency checks."""
+    """Lazy TimesFM runtime with explicit status and dependency checks."""
 
     def __init__(
         self,
@@ -177,7 +194,7 @@ class TimesFMRuntime:
         requested = self.config.device.lower()
         if requested not in {"auto", "cuda", "cpu"}:
             self._status = TimesFMRuntimeStatus(
-                "failed", f"Unsupported device '{requested}'", requested
+                "failed", f"Unsupported device '{requested}'", requested, backend=self.config.backend,
             )
             return self._status
 
@@ -185,6 +202,7 @@ class TimesFMRuntime:
             state="checking",
             message="Checking TimesFM runtime dependencies",
             requested_device=requested,
+            backend=self.config.backend,
         )
         status.available_ram_gb = self._available_ram_gb()
         status.free_disk_gb = shutil.disk_usage(Path.home()).free / 1024**3
@@ -219,16 +237,17 @@ class TimesFMRuntime:
 
         try:
             status.timesfm_version = metadata.version("timesfm")
-            import timesfm
+            package = importlib.import_module("timesfm3" if self.config.backend == "3.0" else "timesfm")
         except (ImportError, metadata.PackageNotFoundError):
             status.state = "unavailable"
-            status.message = "TimesFM 2.5 is not installed in this environment"
+            status.message = f"TimesFM {self.config.backend} is not installed in this environment"
             self._status = status
             return status
 
-        if not hasattr(timesfm, "TimesFM_2p5_200M_torch"):
+        api = ("TimesFM3Evaluator", "ModelConfig") if self.config.backend == "3.0" else ("TimesFM_2p5_200M_torch",)
+        if not all(hasattr(package, name) for name in api):
             status.state = "incompatible"
-            status.message = "Installed TimesFM package does not provide the 2.5 PyTorch API"
+            status.message = f"Installed TimesFM package does not provide the {self.config.backend} PyTorch API"
             self._status = status
             return status
 
@@ -255,6 +274,10 @@ class TimesFMRuntime:
         this instance's metadata, not environment variables or torch.cuda APIs.
         Its Hub loader constructs `cls` before calling load_checkpoint.
         """
+        if self.config.backend == "3.0":
+            from ml.timesfm3_backend import TimesFM3Adapter
+            return TimesFM3Adapter(self.config, device)
+
         import torch
         import timesfm
 
@@ -286,8 +309,9 @@ class TimesFMRuntime:
         module = self._model.model
         observed = {str(tensor.device) for tensor in chain(module.parameters(), module.buffers())}
         expected = "cuda:0" if self.status.resolved_device == "cuda" else "cpu"
-        if observed != {expected} or str(module.device) != expected:
-            raise RuntimeError(f"TimesFM device mismatch: expected {expected}, tensors {sorted(observed)}, input device {module.device}")
+        input_device = self._model.device if self.config.backend == "3.0" else module.device
+        if observed != {expected} or str(input_device) != expected:
+            raise RuntimeError(f"TimesFM device mismatch: expected {expected}, tensors {sorted(observed)}, input device {input_device}")
         self.status.model_device = expected
 
     def _release_model(self):
@@ -314,7 +338,7 @@ class TimesFMRuntime:
 
         if self._model_factory is not None:
             status = TimesFMRuntimeStatus(
-                "ready", "Injected model is ready", self.config.device, "test"
+                "ready", "Injected model is ready", self.config.device, "test", backend=self.config.backend,
             )
             self._status = status
         else:
@@ -441,12 +465,7 @@ class TimesFMRuntime:
 
     @staticmethod
     def _available_ram_gb() -> float | None:
-        try:
-            pages = os.sysconf("SC_AVPHYS_PAGES")
-            page_size = os.sysconf("SC_PAGE_SIZE")
-            return pages * page_size / 1024**3
-        except (ValueError, OSError, AttributeError):
-            return None
+        return available_ram_gb()
 
 
 _runtime: TimesFMRuntime | None = None

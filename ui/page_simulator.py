@@ -8,6 +8,7 @@ import streamlit as st
 from charts.factory import render_equity_curve, render_price_chart
 from config.settings import DEFAULT_INITIAL_CAPITAL, DEFAULT_SIMULATION_COST_PER_FILL_PCT
 from data.fetcher import fetch_ohlcv
+from research.data import completed_daily_bars
 from simulation.engine import HistoricalSimulationEngine
 from simulation.models import (
     CompletionReason,
@@ -122,10 +123,10 @@ def _goal_controls() -> GoalDefinition:
 def _requested_end(start_date: date) -> pd.Timestamp | None:
     mode = st.selectbox(
         "Run until",
-        ["Latest available bar", "Specific date", "Duration"],
+        ["Latest completed bar", "Specific date", "Duration"],
         key="sim_endpoint_mode",
     )
-    if mode == "Latest available bar":
+    if mode == "Latest completed bar":
         return None
     if mode == "Specific date":
         selected = st.date_input(
@@ -323,6 +324,10 @@ def render() -> None:
         "Drop into a historical date and replay a long-or-cash strategy one daily bar at a time. "
         "This MVP prioritizes causal execution, marked-to-market accounting, and reproducibility."
     )
+    st.caption(
+        "Today's and future daily bars are excluded using the market data's timezone "
+        "(UTC when no timezone is provided), even after today's market close."
+    )
 
     with st.sidebar:
         st.subheader("Simulation setup")
@@ -363,6 +368,9 @@ def render() -> None:
         try:
             with st.spinner("Fetching daily history and preparing causal signals..."):
                 df = fetch_ohlcv(ticker, period="max", interval="1d")
+                df = completed_daily_bars(df)
+                if df.empty:
+                    raise ValueError("No completed daily bars are available")
                 prepared = prepare_strategy(definition, df)
                 config = SimulationConfig(
                     ticker=ticker,

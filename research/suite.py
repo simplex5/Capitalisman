@@ -4,7 +4,7 @@ Each worker has its own process, artifacts and logs. Forecast jobs only use
 cached weights; the suite never fetches market data or selects winning settings.
 """
 
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import hashlib
 import json
 import math
@@ -37,8 +37,8 @@ def validate_protocol(protocol):
          "runtime": {"device": "cpu", "max_context": 128, "max_horizon": 30,
                      "batch_size": 1, "chunk_size": 1, "torch_compile": False},
          "min_context": 128, **protocol}
-    if p["mode"] not in {"strategies", "forecast", "both"}:
-        raise ValueError("mode must be strategies, forecast or both")
+    if p["mode"] not in {"strategies", "forecast", "both", "models"}:
+        raise ValueError("mode must be strategies, forecast, both or models")
     for key in ("test_start", "as_of"):
         if not isinstance(p.get(key), str) or pd.isna(pd.Timestamp(p[key])):
             raise ValueError(f"{key} must be an explicit ISO timestamp")
@@ -67,7 +67,7 @@ def validate_protocol(protocol):
         type(h) is not int or h < 1 for h in p["horizons"]
     ) or len(set(p["horizons"])) != len(p["horizons"]):
         raise ValueError("horizons must contain distinct positive integers")
-    jobs = len(p["assets"]) * len(p["horizons"]) * (2 if p["mode"] == "both" else 1)
+    jobs = len(p["assets"]) * len(p["horizons"]) * (2 if p["mode"] in {"both", "models"} else 1)
     if jobs > p["max_jobs"]:
         raise ValueError(f"Protocol requests {jobs} jobs, exceeding max_jobs={p['max_jobs']}")
     from ml.timesfm_runtime import TimesFMRuntimeConfig
@@ -77,6 +77,10 @@ def validate_protocol(protocol):
     if p["mode"] != "strategies" and (max(p["horizons"]) > runtime.max_horizon or p["min_context"] > runtime.effective_context):
         raise ValueError("Runtime context/horizon must cover the requested forecast workload")
     p["runtime"] = asdict(runtime)
+    if p["mode"] == "models":
+        # Validate both backends before creating files or running either model.
+        for backend in ("2.5", "3.0"):
+            replace(runtime, backend=backend, model_id=None)
     return p
 
 
@@ -94,7 +98,7 @@ def run_worker(job_path):
                                      horizon=job["horizon"], cost_pct=job["cost_pct"])
         archive = build_comparison_archive(frame, reports)
         result = {"strategies": strategy_summary(reports).to_dict("records")}
-    elif job["kind"] == "forecast":
+    elif job["kind"] in {"forecast", "model"}:
         from ml.benchmark import benchmark_close_series
         from ml.timesfm_runtime import TimesFMRuntime, TimesFMRuntimeConfig
         runtime = TimesFMRuntime(TimesFMRuntimeConfig(**job["runtime"]))
@@ -106,6 +110,17 @@ def run_worker(job_path):
                                     {"ticker": job["ticker"], **report.configuration}, report)
             result = report.to_dict()
             result.pop("evaluations")  # full per-origin observations remain in the ZIP
+            if job["kind"] == "model":
+                from indicators.forecast import TimesFMForecast
+                from research.evaluation import compare_strategies, strategy_summary
+                from research.timesfm_comparison import build_model_archive
+                indicator = TimesFMForecast(runtime)
+                reports = compare_strategies(
+                    frame, ticker=job["ticker"], test_start=start, horizon=job["horizon"],
+                    cost_pct=job["cost_pct"], indicators={indicator.name: indicator},
+                )
+                archive = build_model_archive(frame, report, reports)
+                result["strategies"] = strategy_summary(reports).to_dict("records")
         finally:
             runtime.unload()
     else:
@@ -161,14 +176,23 @@ def _prepare_jobs(p, root):
             output.write(build_archive("suite_input", {"market": frame},
                                        {**asset, "original_sha256": hashlib.sha256(raw).hexdigest(), "as_of": p["as_of"]}, {}))
         kinds = ("strategies", "forecast") if p["mode"] == "both" else (p["mode"],)
+        if p["mode"] == "models":
+            kinds = ("2.5", "3.0")
         for horizon in p["horizons"]:
             for kind in kinds:
                 directory = root / f"job-{len(jobs):03d}"
                 directory.mkdir()
                 job = {key: p[key] for key in ("test_start", "cost_pct", "runtime", "min_context")}
                 job.update(kind=kind, ticker=asset["ticker"], input=str(snapshot), horizon=horizon)
+                if p["mode"] == "models":
+                    from ml.timesfm_runtime import TimesFMRuntimeConfig
+                    job["kind"] = "model"
+                    job["runtime"] = asdict(replace(
+                        TimesFMRuntimeConfig(**p["runtime"]), backend=kind, model_id=None,
+                    ))
                 write_json(directory / "job.json", job)
-                jobs.append({"job": directory.name, "ticker": asset["ticker"], "kind": kind,
+                jobs.append({"job": directory.name, "ticker": asset["ticker"], "kind": job["kind"],
+                             "backend": job["runtime"]["backend"] if job["kind"] in {"model", "forecast"} else None,
                              "horizon": horizon, "status": "pending"})
     return jobs
 
@@ -214,4 +238,7 @@ def run_suite(protocol, output_dir):
     summary = {"status": "completed" if all(j["status"] == "completed" for j in jobs) else "incomplete",
                "jobs": jobs, "notes": "No tuning or pooled ranking. Forecast intervals are exploratory and unadjusted; strategy metrics are descriptive."}
     write_json(root / "summary.json", summary)
+    if p["mode"] == "models":
+        from research.timesfm_comparison import write_comparison_html
+        write_comparison_html(root, summary)
     return summary

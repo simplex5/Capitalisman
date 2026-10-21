@@ -5,6 +5,96 @@ trading oracle. The integration uses TimesFM 2.5's PyTorch API to produce a
 point forecast and quantiles, converts those into cost-aware probabilities, and
 keeps the model isolated from the core application environment.
 
+## Experimental TimesFM 3.0 comparison
+
+TimesFM 2.5 remains the default. The dashboard's **TimesFM Model** selector
+offers **TimesFM 3.0 (experimental)** when TimesFM Forecast is selected.
+Both backends currently consume only closing prices. Each historical origin
+is an independent series; origins are never treated as correlated variates.
+Native multivariate inputs and covariates are not wired into this experiment.
+
+The adapter targets the published `timesfm==3.0.2` package and its
+`TimesFM3Evaluator(ModelConfig(...)).predict_batch(...)` API. It maps the nine
+q10–q90 channels into the shared forecast type and checks counts, shapes,
+finite values, quantile order, and tensor/input devices. It requests symmetric
+averaging, positivity handling, sorted quantiles, no external z-normalization,
+and `padding_mode="none"`. The 3.0 point forecast is the median. Inference is
+eager: selecting 3.0 records `torch_compile=false`. Context is capped at 15,360.
+See the [upstream API](https://github.com/google-research/timesfm) and
+[published package](https://pypi.org/project/timesfm/3.0.2/).
+
+The [downloaded 3.0 weights' license](https://huggingface.co/google/timesfm-3.0-pytorch/blob/main/LICENSE)
+restricts them to non-commercial, non-production use, including restrictions on
+commercial use of outputs. The 2.5 weights remain Apache-2.0. This experimental
+integration is for evaluating the models, not enabling a production service.
+
+Create a **new** Python 3.11 model environment and install PyTorch for the
+selected hardware there, then install `requirements-timesfm3.txt`. Do not
+install that file together with `requirements-timesfm.txt`: they pin different
+versions of the same package. Version 3.0.2 includes both model APIs, so the new
+environment can compare both checkpoints without modifying the existing 2.5
+environment. For example, after creating `.venv-timesfm3` and installing the
+appropriate PyTorch wheel:
+
+```bash
+.venv-timesfm3/bin/python -m pip install -r requirements-timesfm3.txt
+.venv-timesfm3/bin/python -m scripts.timesfm_check --backend 3.0 --device cpu
+```
+
+Preflight does not download weights. `--smoke` explicitly loads/downloads the
+selected checkpoint. Cache both checkpoints before the bounded comparison;
+`benchmark_suite` refuses network model downloads. Backend selection is also
+available as `--backend 2.5|3.0` in `benchmark_timesfm` or through
+`CAPITALISMAN_TIMESFM_BACKEND`. Recorded runtime configurations include backend,
+checkpoint ID, and settings; UI analysis caches distinguish the backends.
+
+For a visual comparison, save a local OHLCV CSV with a `Date` column and a JSON
+protocol (relative input paths resolve against that JSON). Choose the dates
+before viewing outcomes:
+
+```json
+{
+  "mode": "models",
+  "assets": [{"ticker": "AAPL", "input": "aapl.csv"}],
+  "horizons": [5],
+  "test_start": "2026-04-20",
+  "as_of": "2026-10-20T00:00:00Z",
+  "cost_pct": 0.1,
+  "min_context": 128,
+  "max_jobs": 2,
+  "job_timeout_seconds": 300,
+  "total_timeout_seconds": 600,
+  "runtime": {
+    "device": "cuda", "max_context": 128, "max_horizon": 5,
+    "batch_size": 1, "chunk_size": 1, "torch_compile": false
+  }
+}
+```
+
+```bash
+.venv-timesfm3/bin/python -m scripts.benchmark_suite protocol.json \
+  --output-dir research_runs/aapl-model-comparison-001
+```
+
+The new directory contains **comparison.html**, a self-contained interactive
+report with forecast-versus-actual and daily-equity charts, plus per-model
+archives, logs, status and summary JSON. Both models receive one identical
+frozen input snapshot and matched context, horizon, cost and requested dates.
+They load sequentially in separate worker processes, with hard time limits.
+The table includes forecast MAE, direction accuracy, interval coverage, sample
+size, return after fill costs, drawdown and trade count; archives also retain
+pinball scores, all forecast baselines, SMA/buy-and-hold/cash backtests and
+configuration identities. Failures remain visible and never become zero-return
+successes. A `model_comparison` archive is inspectable, not an exact backtest
+replay archive.
+
+Forecast test start is an origin date; backtest test start is an execution date.
+Compare models within each evaluation, and inspect resolved dates and early
+termination. Historical data evaluated with today's pretrained models remains
+exploratory; this does not establish historical model availability or absence
+of pretraining overlap. Do not choose settings using these outcomes and then
+call the same period held out. Quantile-derived scores remain uncalibrated.
+
 ## Safe Isolated Installation
 
 Do not install or upgrade PyTorch in the base Conda environment. Create the
@@ -52,6 +142,8 @@ Hugging Face cache. It prints point, 10th-, 50th-, and 90th-percentile paths.
 The preflight reports the selected device, package versions, GPU, GPU memory,
 available RAM, and free disk. Errors remain visible in the indicator rather than
 silently masquerading as a valid neutral prediction.
+On Linux, available RAM uses `/proc/meminfo`'s `MemAvailable`, including
+reclaimable file cache; other platforms fall back to the system free-page count.
 
 The sidebar exposes Auto, CPU and CUDA independently of workload profiles. An
 explicit CUDA request fails if CUDA is unavailable. CPU loading binds the model
@@ -184,10 +276,18 @@ Backtest preparation explicitly requests historical origins even when the
 runtime's profile is interactive. Historical origins follow a fixed grid from
 the first eligible context, without adding an extra origin at the data's end;
 appending future bars therefore does not change earlier forecast availability.
+Preparation slices each origin to the runtime's effective context before
+converting to float32 and processes at most `chunk_size` origins per batch.
+Input arrays are released between batches, so their peak storage is bounded by
+`chunk_size * effective_context * 4` bytes rather than the sum of full historical
+prefixes. The result frame still grows with the number of bars.
 A forecast from close `t` for `h` bars is
 evaluated against the same `t+h` close used for the modeled trade's planned
-exit. Failed precomputation is recorded in the frame so historical signal reads
-do not retry the entire model at each bar.
+exit. A model-loading or inference failure during historical preparation raises
+the original exception and aborts the backtest, including mixed-indicator runs.
+The Backtest page displays the error without offering success metrics or a
+research archive. Failed forecasts are not retried for each bar. Interactive
+predictions retain their error detail for the Predict panel.
 
 Forecast values are written only at actual forecast origins. They are not
 forward-filled across bars, which avoids presenting stale forecasts as if they

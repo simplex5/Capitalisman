@@ -50,7 +50,12 @@ class UnsafeAlwaysBuyIndicator(AlwaysBuyIndicator):
 class TestRunBacktest:
     @pytest.fixture
     def indicators(self):
-        return get_all_indicators()
+        from ml.timesfm_runtime import TimesFMRuntime
+        from tests.test_timesfm_runtime import FakeTimesFMModel
+
+        selected = get_all_indicators()
+        selected["TimesFM Forecast"].runtime = TimesFMRuntime(model_factory=FakeTimesFMModel)
+        return selected
 
     def test_returns_report(self, indicators):
         df = make_ohlcv(300, trend="up")

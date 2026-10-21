@@ -93,8 +93,17 @@ def indicator_picker(
     if "FRED Macro" in selected and not os.environ.get("FRED_API_KEY"):
         optional_status.append("FRED Macro needs FRED_API_KEY")
     if "TimesFM Forecast" in selected:
-        if importlib.util.find_spec("timesfm") is None:
-            optional_status.append("TimesFM Forecast needs TimesFM 2.5 + PyTorch")
+        model_label = st.selectbox(
+            "TimesFM Model", ("TimesFM 2.5", "TimesFM 3.0 (experimental)"),
+            key=f"{key}_timesfm_backend",
+        )
+        backend = "3.0" if "3.0" in model_label else "2.5"
+        if backend == "3.0":
+            st.caption("Experimental: closing prices only. Downloaded 3.0 weights are for non-commercial, non-production research.")
+        package = "timesfm3" if backend == "3.0" else "timesfm"
+        if importlib.util.find_spec(package) is None:
+            get_timesfm_runtime(TimesFMRuntimeConfig(backend=backend))
+            optional_status.append(f"TimesFM Forecast needs TimesFM {backend} + PyTorch")
         else:
             devices = ("auto", "cpu", "cuda")
             device_default = os.getenv("CAPITALISMAN_TIMESFM_DEVICE", "auto").lower()
@@ -122,13 +131,13 @@ def indicator_picker(
             profile = select_runtime_profile(
                 hardware, use_case=timesfm_use_case, preference=profile_choice
             )
-            runtime = get_timesfm_runtime(replace(TimesFMRuntimeConfig.from_profile(profile), device=device))
+            runtime = get_timesfm_runtime(replace(TimesFMRuntimeConfig.from_profile(profile, backend=backend), device=device))
             runtime_status = runtime.status
             if runtime_status.state not in {"ready", "loaded"}:
                 optional_status.append(f"TimesFM: {runtime_status.message}")
             else:
                 st.info(
-                    f"**TimesFM {profile.preference.title()} profile** — "
+                    f"**TimesFM {backend}, {profile.preference.title()} profile** — "
                     f"{runtime_status.resolved_device.upper()}, "
                     f"{profile.forecast_context:,}-bar context, batch "
                     f"{profile.batch_size}, chunk {profile.chunk_size}. "
@@ -171,6 +180,7 @@ def analysis_settings_signature() -> tuple:
     )
     runtime = get_timesfm_runtime()
     timesfm = (
+        runtime.config.backend,
         runtime.config.device,
         runtime.config.model_id,
         runtime.config.max_horizon,

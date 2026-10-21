@@ -81,8 +81,11 @@ older artifacts. `research.evaluation.compare_strategies` also accepts explicit
 historically safe indicators, including an independently configured TimesFM
 instance. The CLI defaults to the nine core technical indicators.
 
-Historical research commands and the Backtest page exclude today's dated bar
-and future bars in the provider's index timezone (UTC for date-only indices).
+Historical research commands and the Backtest and Simulator pages exclude today's
+dated bar and future bars in the provider's index timezone (UTC for date-only indices).
+The Simulator applies this cutoff before preparing strategy signals and uses the
+same filtered history for replay and subsequent strategy changes. If no completed
+bars remain, it reports an error without preparing a strategy or creating a replay.
 This conservatively omits even a stock bar after today's exchange close. An
 exchange calendar and provider finality contract would be needed to admit it.
 The lower-level evaluation APIs operate on the supplied historical frame;
@@ -126,6 +129,15 @@ Synthetic tests validate machinery, not forecasting value on market data.
 
 ## Bounded suites from local data
 
+For a TimesFM 2.5 versus experimental 3.0 comparison, use `mode: "models"`.
+This creates two sequential jobs per asset/horizon, using the same frozen
+input snapshot and runtime sizes. Each job runs the existing forecast benchmark
+and a TimesFM-only backtest with the fixed SMA, buy-and-hold and cash baselines.
+The suite writes `comparison.html` with charts and a table, preserving failed
+jobs and partial attempts. See [the setup and protocol](TIMESFM.md#experimental-timesfm-30-comparison).
+Both checkpoints must already be cached in a model environment with
+`timesfm==3.0.2`; the original 2.5 environment can remain unchanged.
+
 Create a protocol JSON such as `protocol.json` before examining outcomes:
 
 ```json
@@ -154,8 +166,8 @@ python -m scripts.benchmark_suite protocol.json --output-dir research_runs/suite
 Input paths are relative to the protocol file. Each input is a local OHLCV CSV
 or research ZIP, with sufficient warmup. `as_of` is an explicit timezone-aware
 completed-bar cutoff. All market snapshots and job settings are saved before
-any evaluation. Modes are `strategies` (default), `forecast`, or `both`; one job
-is an asset/horizon/mode combination. Strategy jobs compare the four existing
+any evaluation. Modes are `strategies` (default), `forecast`, `both`, or `models`;
+`models` runs two jobs per asset/horizon. Strategy jobs compare the four existing
 fixed strategies, with cost quoted round trip. Forecast jobs compare TimesFM
 with the four fixed price baselines, using horizon-spaced origins. The same
 `test_start` denotes first eligible execution for strategies and first eligible

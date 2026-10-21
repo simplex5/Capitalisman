@@ -121,7 +121,7 @@ def benchmark_close_series(
 
     for origin_batch in _chunks(origins, batch_size):
         inputs = [
-            clean.iloc[: origin + 1].to_numpy(dtype=np.float32)
+            clean.iloc[max(0, origin + 1 - runtime.config.effective_context):origin + 1].to_numpy(dtype=np.float32)
             for origin in origin_batch
         ]
         forecasts = runtime.forecast(inputs, horizon=horizon)
