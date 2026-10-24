@@ -95,6 +95,69 @@ exploratory; this does not establish historical model availability or absence
 of pretraining overlap. Do not choose settings using these outcomes and then
 call the same period held out. Quantile-derived scores remain uncalibrated.
 
+## Choosing historical context in the dashboard
+
+On **Predict**, select **TimesFM Forecast** under Indicators and choose
+**TimesFM 3.0 (experimental)**. The **TimesFM Historical Context** selector offers:
+
+| Selection | Behavior |
+|---|---|
+| Use profile setting | Keep the context selected by Auto, Fast, Balanced or Thorough |
+| 2,048 bars | Use at most the most recent 2,048 observations |
+| 4,096 bars | Use at most the most recent 4,096 observations |
+| 8,192 bars | Use at most the most recent 8,192 observations |
+
+An explicit selection sets both `max_context` and `forecast_context`, overriding
+only the profile's context settings. Device, batch/chunk size and other profile
+settings are preserved. The status box shows the effective configuration. The
+selector is available wherever the shared TimesFM 3 indicator controls appear;
+TimesFM 2.5 retains its profile-based controls. These UI choices do not increase
+the adapter's 15,360-bar model limit, and do not guarantee that a workload fits
+available memory. Choose a smaller context explicitly if a forecast fails.
+
+**Period** determines which historical data is fetched; **Signal Horizon (daily
+bars)** determines how far ahead to forecast. For a five-session stock forecast
+using the longest context exposed here:
+
+1. Select **Period: Max** and **Signal Horizon: 5**.
+2. Select **TimesFM 3.0** and **Historical Context: 8,192 bars**.
+3. Click **Run TimesFM Forecast** after selecting or changing settings.
+
+Changing context invalidates the displayed analysis until it is run again. The
+Predict result reports the actual supplied bar count, first/last dates and
+configured limit. If the provider supplies only 6,982 observations, an 8,192-bar
+limit uses 6,982; it does not fabricate the missing history. The forecast banner
+shows the actual checkpoint identifier rather than a fixed model-version label.
+
+Short Period selections may fetch additional indicator warmup history, but that
+history need not fill the selected context. For example, **1 Day** currently
+fetches **3 Months**. A context setting is a ceiling, not evidence that this many
+bars were supplied. **Max** fetches the available history; only the most recent
+observations within the context limit reach the model.
+
+Predict uses daily closing-price data. Five stock bars are five trading sessions,
+not necessarily seven calendar days around holidays. Longer context changes the
+input history, not the data frequency, and does not guarantee better forecasts.
+Additional selected indicators affect the combined signal; they do not become
+TimesFM covariates. Inspect completed-bar cutoffs and compare context choices on
+matched chronological evaluation windows before choosing an accuracy-based
+default. Quantile-derived up estimates remain uncalibrated.
+
+For Python callers, the same context can be requested explicitly:
+
+```python
+from ml.timesfm_runtime import TimesFMRuntimeConfig
+
+config = TimesFMRuntimeConfig(
+    backend="3.0", max_context=8192, forecast_context=8192,
+)
+```
+
+The existing environment-variable settings below apply to
+`TimesFMRuntimeConfig.from_environment()`. Dashboard profiles and the context
+selector construct their own configuration; setting the context environment
+variables alone does not override that selector.
+
 ## Safe Isolated Installation
 
 Do not install or upgrade PyTorch in the base Conda environment. Create the

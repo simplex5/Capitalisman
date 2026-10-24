@@ -131,7 +131,21 @@ def indicator_picker(
             profile = select_runtime_profile(
                 hardware, use_case=timesfm_use_case, preference=profile_choice
             )
-            runtime = get_timesfm_runtime(replace(TimesFMRuntimeConfig.from_profile(profile, backend=backend), device=device))
+            config = replace(TimesFMRuntimeConfig.from_profile(profile, backend=backend), device=device)
+            if backend == "3.0":
+                context_override = st.selectbox(
+                    "TimesFM Historical Context",
+                    (0, 2048, 4096, 8192),
+                    key=f"{key}_timesfm_context_v3",
+                    format_func=lambda value: "Use profile setting" if value == 0 else f"{value:,} bars",
+                    help="Maximum history supplied to the model, in bars. Uses fewer bars if the "
+                         "data is shorter. Longer context increases compute and memory use; "
+                         "it does not guarantee better predictions.",
+                )
+                if context_override:
+                    config = replace(config, max_context=context_override,
+                                     forecast_context=context_override)
+            runtime = get_timesfm_runtime(config)
             runtime_status = runtime.status
             if runtime_status.state not in {"ready", "loaded"}:
                 optional_status.append(f"TimesFM: {runtime_status.message}")
@@ -139,8 +153,8 @@ def indicator_picker(
                 st.info(
                     f"**TimesFM {backend}, {profile.preference.title()} profile** — "
                     f"{runtime_status.resolved_device.upper()}, "
-                    f"{profile.forecast_context:,}-bar context, batch "
-                    f"{profile.batch_size}, chunk {profile.chunk_size}. "
+                    f"{runtime.config.effective_context:,}-bar context, batch "
+                    f"{runtime.config.batch_size}, chunk {runtime.config.chunk_size}. "
                     f"Use case: {profile.use_case}."
                 )
                 if runtime_status.model_device is not None:

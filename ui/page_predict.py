@@ -59,6 +59,7 @@ def _render_timesfm_panel(ticker, horizon, analysis, model_signal, error):
     arrow = _signal_emoji(direction)
     safe_ticker = escape(str(ticker))
     safe_origin = escape(str(analysis.origin))
+    safe_model = escape(str(analysis.forecast.model_id))
     st.markdown(
         f"""
         <div style="
@@ -69,7 +70,7 @@ def _render_timesfm_panel(ticker, horizon, analysis, model_signal, error):
             margin-bottom: 16px;
         ">
             <p style="font-size: 0.8em; letter-spacing: 0.12em; opacity: 0.75; margin: 0;">
-                TIMESFM 2.5 &bull; {analysis.forecast.device.upper()} &bull; MODEL-ONLY
+                {safe_model} &bull; {analysis.forecast.device.upper()} &bull; MODEL-ONLY
             </p>
             <h2 style="color: {color}; margin: 6px 0;">
                 {arrow} {direction.value} FORECAST
@@ -275,6 +276,14 @@ def render():
         return
 
     if timesfm_selected:
+        if timesfm_analysis is not None:
+            limit = timesfm_indicator.runtime.config.effective_context
+            used = min(len(full_df), limit)
+            st.caption(
+                f"History supplied to TimesFM: {used:,} daily bars "
+                f"({full_df.index[-used].date()} through {full_df.index[-1].date()}); "
+                f"configured limit: {limit:,}."
+            )
         _render_timesfm_panel(
             ticker,
             horizon,
