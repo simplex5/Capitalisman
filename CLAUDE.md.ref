@@ -42,6 +42,7 @@ copied into this file (How to Operate, Guardrails); this file is the only projec
    `venv/bin/python -m pip install -r requirements-dev.txt`. `requirements-lock.txt` is upstream's
    hashed lock for a clean Python 3.11 Linux x86_64 env (what CI installs); the local venv does not
    use it. `python3.11` exists at `~/.local/bin/python3.11` for a CI-parity run in a throwaway venv.
+   Never install into system Python, and never put TimesFM, PyTorch or CUDA packages into `venv/`.
 2. **Run the app:** `venv/bin/python -m streamlit run app.py --server.address 127.0.0.1`.
    Pages: Predict / Backtest / Simulator / Explore / Search / Compare / Screener (`ui/page_*.py`).
 3. **With TimesFM:** `./run-timesfm.sh` (ours) launches with the TimesFM env at
@@ -55,7 +56,14 @@ copied into this file (How to Operate, Guardrails); this file is the only projec
 5. **Research entry points** (prefer these to driving the UI):
    `python -m scripts.compare_strategies`, `scripts.benchmark_timesfm`, `scripts.benchmark_suite`,
    `scripts.timesfm_check` (each has `--help`); `backtesting.engine.run_backtest`;
-   `simulation.engine.HistoricalSimulationEngine`; `research.artifacts.load_archive`.
+   `simulation.engine.HistoricalSimulationEngine`; `research.artifacts.load_archive` (checks hashes
+   and schema) and `research.artifacts.replay_backtest_archive` (backtest archives only, needs the
+   matching source). Limits: `compare_strategies` reads local CSV/ZIP, needs an explicit test start
+   and writes a new output ZIP; `benchmark_timesfm` fetches public data and runs the model (TimesFM
+   env); `benchmark_suite` uses frozen local inputs, explicit job/time limits, cached weights only;
+   plain `timesfm_check` does not load weights, its smoke/autotune modes do. Exact arguments and
+   outputs: `docs/AGENT_OPERATIONS.md`. There is no JSON command dispatcher, HTTP control API, MCP
+   server, job service or broker integration: never invent one's endpoints.
 6. **Branches:** work on `develop`; `main` mirrors `upstream/main`. Sync friend's changes:
    `git fetch upstream`, fast-forward `main` to `upstream/main`, then merge `main` into `develop`
    on a `merge/<ticket>-...` branch.
@@ -69,17 +77,43 @@ copied into this file (How to Operate, Guardrails); this file is the only projec
   Backtest cost is a round-trip percentage split across the two fills; simulation cost is a
   percentage per fill. Never interchange the two.
 - Daily equity includes cash days; trading stops at liquidation and gap debt is kept. Never
-  clip losses or drop failed runs to improve results.
+  clip losses or drop failed runs to improve results. Say that margin and borrow costs are not
+  modelled.
 - FRED, Copper-Gold, VIX term structure and Market Correlation are excluded from backtests
   (no historical availability contract yet).
-- Freeze configuration and the test window before looking at outcomes; label exploratory,
-  synthetic and live-model results apart. The evidence floor defaults to 15%.
+- Scope: a research request covers running the research tools within it. Changing strategy
+  defaults, trading, publishing results, uploading private data or creating scheduled jobs each
+  needs its own explicit request.
+- Before a run, write a short protocol into its new output folder: inputs, test dates, settings,
+  costs and resource bounds (format in `docs/AGENT_OPERATIONS.md`, "Prepare one bounded operation").
+- Freeze configuration and the test window before looking at outcomes; never tune on the final
+  test period and then call it held out. Label exploratory, synthetic and live-model results
+  apart. The evidence floor defaults to 15%.
+- Compare baselines on matching windows and state early termination and sample size. A small
+  improvement is a descriptive observation, not evidence of an edge or of significance. An
+  experiment's result names the model/configuration, sample size, baseline comparison, costs and
+  whether the results were used to tune settings.
 - Each research run gets a new `research_runs/<run-id>/` folder, created exclusively; failed
-  runs are kept with their status. Never edit archive fingerprints to make a replay pass.
+  runs are kept with their status. Never edit archive fingerprints to make a replay pass, and
+  never call a rerun on new data or new code an exact reproduction.
+- Network and compute: declare a bounded workload, start small, record failures. No large grids,
+  new model-weight downloads, paid APIs or ongoing jobs unless the user asks; after a resource
+  failure, reduce the workload once, then report.
 - TimesFM: select the device explicitly; `model_device` (verified from loaded parameters) is
-  reported apart from the requested device. Cancellation works between chunks only.
+  reported apart from the requested device. Switching CPU/CUDA unloads the shared runtime without
+  touching CUDA environment variables. Cancellation works between chunks only; a hard time limit
+  needs the suite's worker-process deadline.
 - Secrets stay out of logs, diffs and artifacts; do not read `.env` or dump the environment to
   check whether a key is set.
+
+### Code contracts (copied from upstream's AGENTS.md)
+
+- Reuse the existing engines and the immutable strategy definitions. An experiment passes
+  explicit run parameters; never change global settings to run one.
+- A change to scoring or execution updates the configuration identity/version, the UI's
+  explanation of it and the matching docs.
+- Live GPU checks are separate from the offline unit tests and never replace them. Never claim
+  GitHub CI ran when only local checks ran.
 
 ---
 
