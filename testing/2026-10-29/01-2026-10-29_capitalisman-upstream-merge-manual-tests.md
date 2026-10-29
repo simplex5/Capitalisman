@@ -3,7 +3,7 @@
 Mark each box `[x]` when the step passed, or paste what you saw under it. Send the file
 back as `01-2026-10-29_capitalisman-upstream-merge-manual-tests_reviewed.md`. Ticket CMAN-D1-021 closes only on your marks.
 
-**Verified against:** 55c7cd7
+**Verified against:** de6283f
 **Covers:** backtesting/metrics.py, ui/page_backtest.py, ui/page_predict.py, ui/components.py, ui/page_simulator.py, ui/page_screener.py, indicators/_utils.py, signals/combiner.py, data/fetcher.py, run-timesfm.sh, requirements.txt, CLAUDE.md.ref
 **Branch under test:** develop — this check is only valid on a checkout that carries the
 code (a different branch runs different code; verify after the merge, not before).
@@ -109,12 +109,12 @@ navigation fix, staleness warnings and `run-timesfm.sh`. Nothing was pushed.
 
 ## C. The project instructions
 
-- [ ] **C1. The ref file carries the friend's project facts itself and marks his AGENTS.md as not followed; his files are untouched.**
+- [ ] **C1. The ref file carries the friend's project facts itself, his AGENTS.md is untouched, and his CLAUDE.md is gone.**
       ```
-      cd /home/simplex/projects/Capitalisman && grep -c "not instructions for simplex_mind sessions\|Research facts (copied from upstream's AGENTS.md)" CLAUDE.md.ref && grep -c "read \`AGENTS.md\` before" CLAUDE.md.ref; git diff --quiet upstream/main develop -- AGENTS.md CLAUDE.md && echo UPSTREAM-FILES-UNTOUCHED
+      cd /home/simplex/projects/Capitalisman && grep -c "not instructions for simplex_mind sessions\|Research facts (copied from upstream's AGENTS.md)" CLAUDE.md.ref; git diff --quiet upstream/main develop -- AGENTS.md && echo AGENTS-UNTOUCHED; test -e CLAUDE.md && echo CLAUDE-MD-PRESENT || echo CLAUDE-MD-GONE
       ```
-      Pass: `2` (both new headings), then `0` (no line tells agents to read AGENTS.md), then `UPSTREAM-FILES-UNTOUCHED`. <!-- src: CLAUDE.md.ref Upstream agent files, Research facts -->
-      Fail: a first number below `2`, a second number above `0`, or no `UPSTREAM-FILES-UNTOUCHED` line.
+      Pass: `2` (both new headings), then `AGENTS-UNTOUCHED`, then `CLAUDE-MD-GONE`. <!-- src: CLAUDE.md.ref Upstream agent files, Research facts -->
+      Fail: a number below `2`, no `AGENTS-UNTOUCHED` line, or `CLAUDE-MD-PRESENT`.
 
 - [ ] **C2. Read the new ref file once and say whether it describes the project the way you use it.**
       ```
