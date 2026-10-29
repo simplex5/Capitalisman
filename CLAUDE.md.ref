@@ -18,16 +18,21 @@ a step-through historical simulator and a research suite.
 
 ---
 
-## Project agent policy (from upstream)
+## Upstream agent files (not instructions for simplex_mind sessions)
 
-The friend's repo ships `AGENTS.md` (shared agent policy) and `CLAUDE.md` (which only imports
-`@AGENTS.md`), with recipes in `docs/AGENT_OPERATIONS.md`. Sessions launch in simplex_mind, so
-neither file is loaded automatically: **read `AGENTS.md` before research or operating the app,
-and the matching `docs/AGENT_OPERATIONS.md` recipe before running it.** Both files are upstream's:
-never edit them here (every upstream merge would conflict).
+The friend's repo ships `AGENTS.md` and a `CLAUDE.md` that only imports it (`@AGENTS.md`). They are
+his instructions for an agent launched inside this repo. A simplex_mind session does not load them
+and does not follow them: its workflow (tickets, asking, one step at a time, reply format, commits,
+pushes) comes from simplex_mind only. The project facts they hold are copied into this file
+(How to Operate, Guardrails); this file is the only project instruction file.
 
-Precedence: simplex_mind's protocols govern workflow (tickets, commits, pushes, one-step
-instructions, when to ask). `AGENTS.md` governs research invariants and code contracts.
+- Never edit `AGENTS.md` or `CLAUDE.md` here: they are upstream's, and every upstream merge would
+  conflict. When an upstream merge changes `AGENTS.md`, copy any new project fact into this file.
+- `docs/AGENT_OPERATIONS.md`, `docs/RESEARCH_WORKFLOW.md` and `docs/TIMESFM.md` are reference for
+  the exact arguments, outputs and failure handling of a command named below. Read them for that;
+  their workflow wording (when to ask, how to hand off) does not apply.
+- Launch agent sessions from simplex_mind, never from inside this repo: started here, Claude Code
+  would load upstream's `CLAUDE.md` and `AGENTS.md` instead of simplex_mind's protocols.
 
 ---
 
@@ -56,6 +61,26 @@ instructions, when to ask). `AGENTS.md` governs research invariants and code con
    on a `merge/<ticket>-...` branch.
 7. Track all work via simplex_mind's ticket system (prefix: CMAN).
 
+### Research facts (copied from upstream's AGENTS.md)
+
+- Historical work uses completed daily bars: the CLIs and the Backtest page drop today's bar;
+  lower-level callers apply `research.data.completed_daily_bars` and record the cutoff.
+- Backtest timing: signal on close `t`, enter at open `t+1`, exit at close `t+horizon`.
+  Backtest cost is a round-trip percentage split across the two fills; simulation cost is a
+  percentage per fill. Never interchange the two.
+- Daily equity includes cash days; trading stops at liquidation and gap debt is kept. Never
+  clip losses or drop failed runs to improve results.
+- FRED, Copper-Gold, VIX term structure and Market Correlation are excluded from backtests
+  (no historical availability contract yet).
+- Freeze configuration and the test window before looking at outcomes; label exploratory,
+  synthetic and live-model results apart. The evidence floor defaults to 15%.
+- Each research run gets a new `research_runs/<run-id>/` folder, created exclusively; failed
+  runs are kept with their status. Never edit archive fingerprints to make a replay pass.
+- TimesFM: select the device explicitly; `model_device` (verified from loaded parameters) is
+  reported apart from the requested device. Cancellation works between chunks only.
+- Secrets stay out of logs, diffs and artifacts; do not read `.env` or dump the environment to
+  check whether a key is set.
+
 ---
 
 ## Key Files
@@ -63,7 +88,7 @@ instructions, when to ask). `AGENTS.md` governs research invariants and code con
 ```
 Capitalisman/
 ├── CLAUDE.md.ref              <- this file (ours)
-├── AGENTS.md / CLAUDE.md      <- upstream agent policy (read, never edit)
+├── AGENTS.md / CLAUDE.md      <- upstream's agent files (not followed here, never edit)
 ├── app.py                     <- Streamlit entrypoint + sidebar navigation
 ├── run-timesfm.sh             <- one-command TimesFM launch (ours)
 ├── ui/                        <- page modules (page_predict.py, page_backtest.py, ...)
