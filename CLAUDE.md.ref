@@ -20,19 +20,19 @@ a step-through historical simulator and a research suite.
 
 ## Upstream agent files (not instructions for simplex_mind sessions)
 
-The friend's repo ships `AGENTS.md` and a `CLAUDE.md` that only imports it (`@AGENTS.md`). They are
-his instructions for an agent launched inside this repo. A simplex_mind session does not load them
-and does not follow them: its workflow (tickets, asking, one step at a time, reply format, commits,
-pushes) comes from simplex_mind only. The project facts they hold are copied into this file
-(How to Operate, Guardrails); this file is the only project instruction file.
+The friend's repo ships `AGENTS.md`: his instructions for an agent launched inside this repo.
+A simplex_mind session does not follow it: its workflow (tickets, asking, one step at a time,
+reply format, commits, pushes) comes from simplex_mind only. The project facts it holds are
+copied into this file (How to Operate, Guardrails); this file is the only project instruction file.
 
-- Never edit `AGENTS.md` or `CLAUDE.md` here: they are upstream's, and every upstream merge would
-  conflict. When an upstream merge changes `AGENTS.md`, copy any new project fact into this file.
+- Never edit `AGENTS.md` here: it is upstream's, and every upstream merge would conflict. When an
+  upstream merge changes it, copy any new project fact into this file.
+- Upstream's `CLAUDE.md` (it only imported `@AGENTS.md`) is deleted here on purpose, so Claude Code
+  never loads upstream's instructions. If an upstream merge reports a modify/delete conflict on
+  `CLAUDE.md`, keep it deleted (`git rm CLAUDE.md`).
 - `docs/AGENT_OPERATIONS.md`, `docs/RESEARCH_WORKFLOW.md` and `docs/TIMESFM.md` are reference for
   the exact arguments, outputs and failure handling of a command named below. Read them for that;
   their workflow wording (when to ask, how to hand off) does not apply.
-- Launch agent sessions from simplex_mind, never from inside this repo: started here, Claude Code
-  would load upstream's `CLAUDE.md` and `AGENTS.md` instead of simplex_mind's protocols.
 
 ---
 
@@ -88,7 +88,7 @@ pushes) comes from simplex_mind only. The project facts they hold are copied int
 ```
 Capitalisman/
 ├── CLAUDE.md.ref              <- this file (ours)
-├── AGENTS.md / CLAUDE.md      <- upstream's agent files (not followed here, never edit)
+├── AGENTS.md                  <- upstream's agent file (not followed here, never edit)
 ├── app.py                     <- Streamlit entrypoint + sidebar navigation
 ├── run-timesfm.sh             <- one-command TimesFM launch (ours)
 ├── ui/                        <- page modules (page_predict.py, page_backtest.py, ...)
