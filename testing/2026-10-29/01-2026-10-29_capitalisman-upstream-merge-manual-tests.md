@@ -3,7 +3,7 @@
 Mark each box `[x]` when the step passed, or paste what you saw under it. Send the file
 back as `01-2026-10-29_capitalisman-upstream-merge-manual-tests_reviewed.md`. Ticket CMAN-D1-021 closes only on your marks.
 
-**Verified against:** 2bf8a6a33084a30ec612dca8b5bb9b669840facb
+**Verified against:** 84d89b3
 **Covers:** backtesting/metrics.py, ui/page_backtest.py, ui/page_predict.py, ui/components.py, ui/page_simulator.py, ui/page_screener.py, indicators/_utils.py, signals/combiner.py, data/fetcher.py, run-timesfm.sh, requirements.txt, CLAUDE.md.ref
 **Branch under test:** develop — this check is only valid on a checkout that carries the
 code (a different branch runs different code; verify after the merge, not before).
@@ -136,6 +136,8 @@ navigation fix, staleness warnings and `run-timesfm.sh`. Nothing was pushed.
   That environment is not installed here, so this checklist does not cover it.
 - The screener's batch fetch does not retry when Yahoo rate-limits it: `yf.download` swallows the error.
   This is older than the merge and is ticketed as CMAN-D1-022.
+- Accepted limit (CMAN-D1-021 F11): `run-timesfm.sh` still listens on every network interface, as it did before the merge;
+  the friend's AGENTS.md prefers 127.0.0.1. Adding `--server.address 127.0.0.1` to the launcher is a one-line change if you want it local-only.
 - Nothing was pushed to origin; GitHub CI did not run.
 
 ## Dev command appendix
