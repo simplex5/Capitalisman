@@ -118,6 +118,7 @@ INDICATOR_CATEGORIES = {
 
 # Signal combination
 AMBIGUITY_THRESHOLD = 0.10  # if top two directions within 10%, result is HOLD
+MIN_EVIDENCE_STRENGTH = 0.15  # heuristic floor, not a calibrated probability
 
 # Tunable thresholds exposed in the UI's "Advanced Settings" panel.
 # Each entry maps a setting name to metadata for rendering a slider.
@@ -127,6 +128,7 @@ TUNABLE_THRESHOLDS = {
     "STOCH_OVERSOLD": {"label": "Stochastic Oversold", "min": 5, "max": 40, "step": 1},
     "STOCH_OVERBOUGHT": {"label": "Stochastic Overbought", "min": 60, "max": 95, "step": 1},
     "AMBIGUITY_THRESHOLD": {"label": "Ambiguity Threshold", "min": 0.0, "max": 0.30, "step": 0.01},
+    "MIN_EVIDENCE_STRENGTH": {"label": "Minimum Evidence Strength", "min": 0.0, "max": 1.0, "step": 0.01},
 }
 
 # Available data periods and intervals for UI
@@ -224,7 +226,3 @@ WATCHLIST_PRESETS = {
     "Indices": ["^GSPC", "^DJI", "^IXIC", "^RUT"],
     "Custom": [],
 }
-
-# Backtest metrics
-RISK_FREE_RATE_ANNUAL = 0.04   # annual risk-free rate subtracted in Sharpe
-MIN_TRADES_FOR_SHARPE = 10     # below this, Sharpe is reported as n/a

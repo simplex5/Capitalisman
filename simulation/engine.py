@@ -1,6 +1,8 @@
 """Deterministic daily-bar, long-or-cash historical simulation engine."""
 
 import math
+import json
+from dataclasses import asdict
 
 import pandas as pd
 
@@ -74,6 +76,10 @@ class HistoricalSimulationEngine:
             EventType.CREATED,
             f"Simulation created for {config.ticker} with {strategy.definition.name}.",
             starting_capital=f"{config.starting_capital:.2f}",
+            configuration_id=strategy.definition.configuration_id,
+            strategy_configuration=json.dumps(asdict(strategy.definition), sort_keys=True),
+            cost_per_fill_pct=str(config.transaction_cost_pct),
+            data_fingerprint=str(strategy.market_data_fingerprint),
         )
         # The strategy is selected before the drop-in date, so the most recent
         # completed close may queue the first order for the drop-in open.
@@ -197,6 +203,8 @@ class HistoricalSimulationEngine:
             self._event_timestamp(),
             EventType.STRATEGY_CHANGED,
             f"Strategy changed from {old_name} to {strategy.definition.name}.",
+            configuration_id=strategy.definition.configuration_id,
+            strategy_configuration=json.dumps(asdict(strategy.definition), sort_keys=True),
         )
         if self.state.current_position >= 0:
             self._queue_from_signal(self.state.current_position)
@@ -290,6 +298,8 @@ class HistoricalSimulationEngine:
             EventType.ORDER_QUEUED,
             f"Queued {action.value} for the next market open.",
             confidence=f"{signal.confidence:.4f}",
+            directional_agreement=f"{signal.directional_agreement:.4f}",
+            evidence_strength=f"{signal.evidence_strength:.4f}",
             signal_date=str(signal_date),
             strategy=self._strategy.definition.name,
         )
@@ -302,28 +312,19 @@ class HistoricalSimulationEngine:
         cost_rate = self.config.transaction_cost_pct / 100.0
 
         if order.action == OrderAction.BUY and portfolio.quantity == 0:
-            quantity = portfolio.cash / (open_price * (1.0 + cost_rate))
-            notional = quantity * open_price
-            fee = notional * cost_rate
-            portfolio.cash = max(0.0, portfolio.cash - notional - fee)
-            portfolio.quantity = quantity
+            fill = portfolio.open_position(open_price, cost_rate)
         elif order.action == OrderAction.SELL and portfolio.quantity > 0:
-            quantity = portfolio.quantity
-            notional = quantity * open_price
-            fee = notional * cost_rate
-            portfolio.cash += notional - fee
-            portfolio.quantity = 0.0
+            fill = portfolio.close_position(open_price, cost_rate)
         else:
             self.state.pending_order = None
             return
 
-        portfolio.total_fees += fee
         self._add_event(
             timestamp,
             EventType.ORDER_FILLED,
             f"Filled {order.action.value} at ${open_price:,.2f}.",
-            quantity=f"{quantity:.8f}",
-            fee=f"{fee:.8f}",
+            quantity=f"{abs(fill.quantity):.8f}",
+            fee=f"{fill.fee:.8f}",
             action=order.action.value,
             price=f"{open_price:.8f}",
             signal_date=str(order.signal_date),

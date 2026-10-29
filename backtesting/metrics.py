@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 
 from backtesting.report import BacktestReport
-from config.settings import MIN_TRADES_FOR_SHARPE, RISK_FREE_RATE_ANNUAL
 
 
 def compute_metrics(report: BacktestReport) -> BacktestReport:
@@ -12,27 +11,32 @@ def compute_metrics(report: BacktestReport) -> BacktestReport:
     trades = report.trades
     report.total_trades = len(trades)
 
-    if not trades:
+    if not trades and report.equity_curve.empty:
         return report
 
-    # Profitable = positive P&L (the standard financial meaning of "winning").
-    # Exactly-flat trades are neither winners nor losers.
+    # Profitable = positive P&L (the standard financial meaning of "winning")
     report.winning_trades = sum(1 for t in trades if t.pnl_pct > 0)
-    report.losing_trades = sum(1 for t in trades if t.pnl_pct < 0)
-    report.win_rate = report.winning_trades / report.total_trades
+    report.losing_trades = report.total_trades - report.winning_trades
+    report.win_rate = report.winning_trades / report.total_trades if trades else 0.0
 
     # Direction accuracy = predicted direction matched actual price movement
     report.correct_predictions = sum(1 for t in trades if t.correct)
-    report.prediction_accuracy = report.correct_predictions / report.total_trades
+    report.prediction_accuracy = report.correct_predictions / report.total_trades if trades else 0.0
 
     # Build equity curve
-    equity = [report.initial_capital]
+    trade_equity = [report.initial_capital]
+    dollar_pnl = []
     for t in trades:
-        pnl_mult = 1 + t.pnl_pct
-        equity.append(equity[-1] * pnl_mult)
+        pnl = t.pnl_dollars if t.pnl_dollars is not None else trade_equity[-1] * t.pnl_pct
+        dollar_pnl.append(pnl)
+        trade_equity.append(trade_equity[-1] + pnl)
 
-    dates = [trades[0].entry_date] + [t.exit_date for t in trades]
-    report.equity_curve = pd.Series(equity, index=dates)
+    # Legacy trade-only reports retain an exit-only curve, but cannot supply
+    # daily risk statistics. Engine reports always provide the full ledger.
+    if report.equity_curve.empty:
+        dates = [trades[0].entry_date] + [t.exit_date for t in trades]
+        report.equity_curve = pd.Series(trade_equity, index=dates)
+    equity = report.equity_curve.to_numpy(dtype=float)
 
     # Cumulative return
     report.cumulative_return = (equity[-1] / equity[0]) - 1
@@ -48,31 +52,28 @@ def compute_metrics(report: BacktestReport) -> BacktestReport:
             max_dd = dd
     report.max_drawdown = max_dd
 
-    # Sharpe ratio annualized from the observed trade frequency, in excess of
-    # the risk-free rate. Estimated from per-trade returns, so with few
-    # non-overlapping trades it is far too noisy to report — None below the
-    # minimum trade count (UI shows n/a).
-    returns = np.array([t.pnl_pct for t in trades])
-    if len(returns) >= MIN_TRADES_FOR_SHARPE and np.std(returns) > 0:
-        elapsed_days = max((trades[-1].exit_date - trades[0].entry_date).days, 1)
-        periods_per_year = len(trades) / (elapsed_days / 365.25)
-        rf_per_period = (1.0 + RISK_FREE_RATE_ANNUAL) ** (1.0 / periods_per_year) - 1.0
-        report.sharpe_ratio = (
-            (np.mean(returns) - rf_per_period) / np.std(returns)
-        ) * np.sqrt(periods_per_year)
-    else:
-        report.sharpe_ratio = None
+    # Daily close-to-close portfolio returns include fees and cash days.
+    # Assumes zero risk-free rate and 252 equity / 365 crypto sessions per year.
+    report.sharpe_ratio = 0.0
+    if report.snapshots:
+        returns = report.equity_curve.pct_change(fill_method=None).iloc[1:].to_numpy()
+        if len(returns) > 1 and np.isfinite(returns).all() and np.std(returns, ddof=1) > 0:
+            report.sharpe_ratio = float(
+                np.mean(returns) / np.std(returns, ddof=1)
+                * np.sqrt(365 if report.is_crypto else 252)
+            )
 
-    # Profit factor; None (not inf) when there are no losing trades so the
-    # sentinel can't leak into downstream math or formatting.
-    gross_profit = sum(t.pnl_pct for t in trades if t.pnl_pct > 0)
-    gross_loss = abs(sum(t.pnl_pct for t in trades if t.pnl_pct < 0))
-    report.profit_factor = gross_profit / gross_loss if gross_loss > 0 else None
-
-    total_span = (trades[-1].exit_date - trades[0].entry_date).total_seconds()
-    invested_span = sum(
-        (trade.exit_date - trade.entry_date).total_seconds() for trade in trades
+    # Use dollar P&L: each trade is sized from the compounded entry equity.
+    gross_profit = sum(pnl for pnl in dollar_pnl if pnl > 0)
+    gross_loss = -sum(pnl for pnl in dollar_pnl if pnl < 0)
+    report.profit_factor = (
+        gross_profit / gross_loss if gross_loss > 0
+        else float("inf") if gross_profit > 0 else 0.0
     )
-    report.exposure_pct = min(1.0, invested_span / total_span) if total_span > 0 else 0.0
+
+    report.exposure_pct = (
+        sum(snapshot.exposed for snapshot in report.snapshots) / len(report.snapshots)
+        if report.snapshots else 0.0
+    )
 
     return report

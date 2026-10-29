@@ -191,7 +191,7 @@ def render():
                         {arrow} {escape(ticker)}: {signal.direction.value}
                     </h2>
                     <p style="font-size: 1.1em; opacity: 0.9; margin: 6px 0 0 0;">
-                        Directional Agreement: {signal.confidence:.0%}
+                        Directional agreement: {signal.directional_agreement:.0%} &bull; Evidence strength: {signal.evidence_strength:.0%}
                     </p>
                 </div>
                 """,

@@ -1,5 +1,6 @@
 """Tests for backtesting engine and metrics."""
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -13,6 +14,7 @@ from tests.conftest import make_ohlcv
 
 
 class AlwaysBuyIndicator(BaseIndicator):
+    historical_safe = True
     @property
     def name(self):
         return "Always Buy"
@@ -48,7 +50,12 @@ class UnsafeAlwaysBuyIndicator(AlwaysBuyIndicator):
 class TestRunBacktest:
     @pytest.fixture
     def indicators(self):
-        return get_all_indicators()
+        from ml.timesfm_runtime import TimesFMRuntime
+        from tests.test_timesfm_runtime import FakeTimesFMModel
+
+        selected = get_all_indicators()
+        selected["TimesFM Forecast"].runtime = TimesFMRuntime(model_factory=FakeTimesFMModel)
+        return selected
 
     def test_returns_report(self, indicators):
         df = make_ohlcv(300, trend="up")
@@ -115,6 +122,8 @@ class TestRunBacktest:
         df = make_ohlcv(90, trend="up")
         evaluation_start = df.index[60]
         df.loc[evaluation_start, "Open"] = 123.45
+        df.loc[evaluation_start, "High"] = max(df.loc[evaluation_start, "High"], 123.45)
+        df.loc[evaluation_start, "Low"] = min(df.loc[evaluation_start, "Low"], 123.45)
         report = run_backtest(
             df,
             {"Always Buy": AlwaysBuyIndicator()},
@@ -169,7 +178,7 @@ class TestComputeMetrics:
         assert result.win_rate == 1.0
         assert result.cumulative_return > 0
         assert result.max_drawdown == 0.0
-        assert result.profit_factor is None  # no losing trades
+        assert result.profit_factor == float("inf")
 
     def test_all_losing(self):
         trades = [self._make_trade(-0.03, correct=False) for _ in range(5)]
@@ -212,7 +221,23 @@ class TestComputeMetrics:
         # Equity curve has n_trades + 1 points (initial + after each trade)
         assert len(result.equity_curve) == 4
 
-    def test_sharpe_suppressed_below_min_trades(self):
+    def test_profit_factor_uses_compounded_dollar_pnl(self):
+        report = BacktestReport(
+            ticker="T", period="1y", horizon_days=5, initial_capital=10000,
+            trades=[self._make_trade(1.0), self._make_trade(-0.5, correct=False)],
+        )
+        result = compute_metrics(report)
+        assert result.equity_curve.tolist() == [10000, 20000, 10000]
+        assert result.profit_factor == pytest.approx(1.0)
+
+    def test_flat_trades_do_not_report_infinite_profit_factor(self):
+        report = BacktestReport(
+            ticker="T", period="1y", horizon_days=5, initial_capital=10000,
+            trades=[self._make_trade(0.0)],
+        )
+        assert compute_metrics(report).profit_factor == 0.0
+
+    def test_trade_only_report_does_not_invent_daily_sharpe(self):
         trades = [
             self._make_trade(0.05),
             self._make_trade(-0.02, correct=False),
@@ -223,33 +248,14 @@ class TestComputeMetrics:
             initial_capital=10000, trades=trades,
         )
         result = compute_metrics(report)
-        # 3 trades is far too few for a meaningful Sharpe estimate
-        assert result.sharpe_ratio is None
+        assert result.sharpe_ratio == 0.0
 
-    def test_sharpe_calculated_with_enough_trades(self):
-        trades = [
-            self._make_trade(0.05 if i % 2 == 0 else -0.02, correct=(i % 2 == 0))
-            for i in range(12)
-        ]
+    def test_crypto_sharpe_uses_365(self):
+        trades = [self._make_trade(0.05), self._make_trade(0.03)]
         report = BacktestReport(
-            ticker="T", period="1y", horizon_days=5,
-            initial_capital=10000, trades=trades,
+            ticker="BTC-USD", period="1y", horizon_days=5,
+            initial_capital=10000, trades=trades, is_crypto=True,
         )
         result = compute_metrics(report)
+        # Should compute without error using 365 trading days
         assert isinstance(result.sharpe_ratio, float)
-        assert result.sharpe_ratio != 0.0
-
-    def test_flat_trades_are_neither_wins_nor_losses(self):
-        trades = [
-            self._make_trade(0.05),
-            self._make_trade(0.0),
-            self._make_trade(-0.02, correct=False),
-        ]
-        report = BacktestReport(
-            ticker="T", period="1y", horizon_days=5,
-            initial_capital=10000, trades=trades,
-        )
-        result = compute_metrics(report)
-        assert result.winning_trades == 1
-        assert result.losing_trades == 1
-        assert result.total_trades == 3

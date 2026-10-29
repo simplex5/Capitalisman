@@ -12,6 +12,8 @@ from signals.base import SignalDirection, SignalResult
 
 @register
 class VWAP(BaseIndicator):
+
+    historical_safe = True
     WINDOW = 20  # rolling anchor period
 
     @property
@@ -73,6 +75,8 @@ class VWAP(BaseIndicator):
 
 @register
 class OBV(BaseIndicator):
+
+    historical_safe = True
     @property
     def name(self) -> str:
         return "OBV"
@@ -100,18 +104,24 @@ class OBV(BaseIndicator):
         if "OBV" not in df.columns:
             df = self.compute(df)
 
-        obv = df["OBV"].iloc[idx]
-        obv_sma = df["OBV_SMA"].iloc[idx]
+        position = idx if idx >= 0 else len(df) + idx
+        if not 0 <= position < len(df):
+            raise IndexError("OBV signal index is out of range")
+        if position < self.lookback - 1:
+            return SignalResult(self.name, SignalDirection.HOLD, 0.0, "Insufficient data")
+
+        obv = df["OBV"].iloc[position]
+        obv_sma = df["OBV_SMA"].iloc[position]
 
         if pd.isna(obv) or pd.isna(obv_sma):
             return SignalResult(self.name, SignalDirection.HOLD, 0.0, "Insufficient data")
 
         # Compare price trend vs OBV trend over last 10 bars
-        lookback = min(10, len(df) - 1)
+        lookback = min(10, position)
         if lookback < 2:
             return SignalResult(self.name, SignalDirection.HOLD, 0.0, "Insufficient data")
 
-        start_idx = idx - lookback if idx != -1 else -(lookback + 1)
+        start_idx = position - lookback
 
         price_start = df["Close"].iloc[start_idx]
         obv_start = df["OBV"].iloc[start_idx]
@@ -119,10 +129,10 @@ class OBV(BaseIndicator):
         if pd.isna(price_start) or pd.isna(obv_start):
             return SignalResult(self.name, SignalDirection.HOLD, 0.0, "Insufficient data")
 
-        price_change = df["Close"].iloc[idx] - price_start
+        price_change = df["Close"].iloc[position] - price_start
         obv_change = df["OBV"].iloc[idx] - obv_start
 
-        obv_slice = df["OBV"].iloc[start_idx:]
+        obv_slice = df["OBV"].iloc[start_idx : position + 1]
         obv_range = obv_slice.max() - obv_slice.min()
         if pd.isna(obv_range) or obv_range == 0:
             obv_range = 1

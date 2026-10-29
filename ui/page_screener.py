@@ -4,12 +4,16 @@ import streamlit as st
 
 from config.settings import WATCHLIST_PRESETS
 from data.fetcher import TransientFetchError, fetch_ohlcv_batch, staleness_note
-from ui.components import check_data_sufficiency
 from data.watchlists import delete_watchlist, load_watchlists, save_watchlist
 from indicators.registry import get_all_indicators
 from signals.base import SignalDirection
 from signals.combiner import combine_signals
-from ui.components import horizon_input, indicator_picker
+from ui.components import (
+    analysis_settings_signature,
+    check_data_sufficiency,
+    horizon_input,
+    indicator_picker,
+)
 
 
 def _signal_color(direction: SignalDirection) -> str:
@@ -155,7 +159,8 @@ def render():
                     "price": price,
                     "change_pct": change_pct,
                     "direction": signal.direction,
-                    "confidence": signal.confidence,
+                    "confidence": signal.directional_agreement,
+                    "evidence_strength": signal.evidence_strength,
                     "reasoning": signal.reasoning,
                     "scores": signal.scores,
                 })
@@ -168,14 +173,15 @@ def render():
             st.warning("No results. All tickers failed to fetch or compute.")
             return
 
-        # Sort by confidence descending
-        results.sort(key=lambda r: r["confidence"], reverse=True)
+        # Rank by evidence, then agreement; weak lone votes should not lead.
+        results.sort(key=lambda r: (r["evidence_strength"], r["confidence"]), reverse=True)
         st.session_state["screener_results"] = results
         st.session_state["screener_failures"] = failures
         st.session_state["screener_params"] = {
             "tickers": tickers,
             "horizon": horizon,
             "indicators": selected_indicators,
+            "settings": analysis_settings_signature(),
         }
 
     # Display results
@@ -183,6 +189,7 @@ def render():
         "tickers": tickers,
         "horizon": horizon,
         "indicators": selected_indicators,
+        "settings": analysis_settings_signature(),
     }
     results = st.session_state.get("screener_results")
     if st.session_state.get("screener_params") != current_params:
@@ -197,12 +204,12 @@ def render():
             for failure in failures:
                 st.write(failure)
 
-    st.markdown(f"**{len(results)} results** — sorted by directional agreement")
+    st.markdown(f"**{len(results)} results** — sorted by evidence strength, then agreement")
 
     header_cols = st.columns([2, 2, 1.5, 1, 1])
     for column, label in zip(
         header_cols,
-        ["Ticker", "Price / Change", "Signal", "Agreement", "Action"],
+        ["Ticker", "Price / Change", "Signal", "Evidence / Agreement", "Action"],
     ):
         column.caption(label)
 
@@ -216,10 +223,7 @@ def render():
         )
 
         with col_ticker:
-            label = f"**{r['ticker']}**"
-            if r["name"] and r["name"] != r["ticker"]:
-                label += f"  \n{r['name']}"
-            st.markdown(label)
+            st.markdown(f"**{r['ticker']}**")
 
         with col_price:
             st.markdown(
@@ -236,7 +240,7 @@ def render():
             )
 
         with col_conf:
-            st.markdown(f"{r['confidence']:.0%}")
+            st.markdown(f"{r.get('evidence_strength', 0):.0%} / {r['confidence']:.0%}")
 
         with col_action:
 
@@ -272,6 +276,7 @@ def render():
             "Change %": r["change_pct"],
             "Signal": r["direction"].value,
             "Directional Agreement": r["confidence"],
+            "Evidence Strength": r.get("evidence_strength", 0),
             "BUY Score": r["scores"].get("BUY", 0),
             "SELL Score": r["scores"].get("SELL", 0),
             "Reasoning": r["reasoning"],

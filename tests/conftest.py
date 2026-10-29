@@ -5,28 +5,22 @@ import pandas as pd
 import pytest
 
 
-def _refuse_to_load():
-    raise RuntimeError("TimesFM is disabled in the unit test suite")
-
-
 @pytest.fixture(autouse=True)
-def offline_timesfm(monkeypatch):
-    """Keep the real TimesFM runtime out of the unit suite.
-
-    The registered TimesFM indicator holds the process singleton; in the ML
-    conda environment the generic parametrized indicator tests would otherwise
-    download HuggingFace weights and run GPU inference. The injected runtime
-    fails load() deterministically, exercising the same HOLD fallback the
-    indicator uses when TimesFM is absent.
-    """
-    from indicators.registry import get_all_indicators
+def offline_integrations(monkeypatch):
+    """Unit/UI tests never download market data or real model weights."""
+    import indicators.macro as macro
+    import indicators.systemic as systemic
+    import indicators.fred as fred
     from ml.timesfm_runtime import TimesFMRuntime
-
-    indicator = get_all_indicators().get("TimesFM Forecast")
-    if indicator is not None:
-        monkeypatch.setattr(
-            indicator, "runtime", TimesFMRuntime(model_factory=_refuse_to_load)
-        )
+    for module in (macro, systemic):
+        monkeypatch.setattr(module, "fetch_reference_close", lambda *args, **kwargs: None)
+    monkeypatch.setattr(fred, "_fetch_fred_series", lambda *args, **kwargs: None)
+    original = TimesFMRuntime.load
+    def load(self):
+        if self._model_factory is None:
+            raise RuntimeError("Real model loading is disabled in offline tests")
+        return original(self)
+    monkeypatch.setattr(TimesFMRuntime, "load", load)
 
 
 def make_ohlcv(

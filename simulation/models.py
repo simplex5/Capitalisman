@@ -6,6 +6,8 @@ are mutable while a simulation is in progress.
 """
 
 import math
+import hashlib
+import json
 from dataclasses import dataclass, field
 from enum import Enum
 from numbers import Integral
@@ -13,6 +15,9 @@ from numbers import Integral
 import pandas as pd
 
 from config.settings import DEFAULT_SIMULATION_COST_PER_FILL_PCT
+from config.settings import INDICATOR_WEIGHTS, TIMESCALE_ADJUSTMENTS, MIN_EVIDENCE_STRENGTH
+from config.parameters import capture_parameters
+from portfolio.accounting import PortfolioState  # re-export for existing callers
 
 
 class GoalKind(str, Enum):
@@ -82,10 +87,14 @@ class StrategyDefinition:
     horizon_days: int = 5
     ambiguity_threshold: float = 0.10
     buy_and_hold: bool = False
+    parameters: tuple[tuple[str, float], ...] = ()
+    category_adjustments: tuple[tuple[str, float], ...] = ()
+    min_evidence_strength: float = MIN_EVIDENCE_STRENGTH
 
     def __post_init__(self) -> None:
         if not self.strategy_id.strip() or not self.name.strip():
             raise ValueError("Strategy id and name are required.")
+        object.__setattr__(self, "indicator_names", tuple(self.indicator_names))
         if (
             isinstance(self.horizon_days, bool)
             or not isinstance(self.horizon_days, Integral)
@@ -94,6 +103,8 @@ class StrategyDefinition:
             raise ValueError("Strategy horizon must be at least one day.")
         if not math.isfinite(self.ambiguity_threshold) or not 0 <= self.ambiguity_threshold < 1:
             raise ValueError("Ambiguity threshold must be in [0, 1).")
+        if not math.isfinite(self.min_evidence_strength) or not 0 <= self.min_evidence_strength <= 1:
+            raise ValueError("Minimum evidence strength must be in [0, 1].")
         if not self.buy_and_hold and not self.indicator_names:
             raise ValueError("An indicator strategy must select at least one indicator.")
         if len(set(self.indicator_names)) != len(self.indicator_names):
@@ -105,10 +116,35 @@ class StrategyDefinition:
             raise ValueError("Weights may only reference selected indicators.")
         if any(not math.isfinite(weight) or weight <= 0 for _, weight in self.weights):
             raise ValueError("Indicator weights must be greater than zero.")
+        supplied = dict(self.weights)
+        object.__setattr__(self, "weights", tuple(
+            (name, supplied.get(name, INDICATOR_WEIGHTS.get(name, 1.0)))
+            for name in self.indicator_names
+        ))
+        object.__setattr__(self, "parameters", capture_parameters(self.parameters))
+        scale = "short" if self.horizon_days <= 3 else "medium" if self.horizon_days <= 10 else "long"
+        adjustments = self.category_adjustments or tuple(sorted(TIMESCALE_ADJUSTMENTS[scale].items()))
+        if len(dict(adjustments)) != len(adjustments) or any(
+            not math.isfinite(value) or value < 0 for _, value in adjustments
+        ):
+            raise ValueError("Category adjustments must be unique, finite and non-negative")
+        object.__setattr__(self, "category_adjustments", tuple((name, value) for name, value in adjustments))
 
     @property
     def weight_map(self) -> dict[str, float]:
         return dict(self.weights)
+
+    @property
+    def configuration_id(self) -> str:
+        """Content identity independent of the preset's display name/id."""
+        payload = {
+            "version": 3, "indicators": self.indicator_names, "weights": self.weights,
+            "parameters": self.parameters, "adjustments": self.category_adjustments,
+            "horizon": self.horizon_days, "ambiguity": self.ambiguity_threshold,
+            "buy_and_hold": self.buy_and_hold,
+            "min_evidence_strength": self.min_evidence_strength,
+        }
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -142,22 +178,6 @@ class SimulationConfig:
             raise ValueError("End date must not be before the start date.")
         object.__setattr__(self, "start_date", start)
         object.__setattr__(self, "end_date", end)
-
-
-@dataclass
-class PortfolioState:
-    cash: float
-    quantity: float = 0.0
-    last_price: float | None = None
-    total_fees: float = 0.0
-
-    @property
-    def market_value(self) -> float:
-        return self.quantity * (self.last_price or 0.0)
-
-    @property
-    def equity(self) -> float:
-        return self.cash + self.market_value
 
 
 @dataclass(frozen=True)

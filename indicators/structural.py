@@ -90,6 +90,8 @@ class BubbleRisk(BaseIndicator):
     above 0.35 warrant caution and above 0.6 indicate elevated bubble risk.
     """
 
+    historical_safe = True
+
     HURST_WINDOW = 120
     ACCEL_WINDOW = 60
 

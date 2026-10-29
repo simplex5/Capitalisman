@@ -1,0 +1,10 @@
+# Direct versions used to resolve the Python 3.11 Linux lock.
+# Update intentionally, regenerate requirements-lock.txt, then run the suite.
+streamlit==1.32.2
+yfinance==1.2.0
+ta==0.11.0
+plotly==5.24.1
+pandas==2.3.3
+numpy==1.26.4
+scipy==1.10.1
+pytest==7.4.4

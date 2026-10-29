@@ -1,28 +1,33 @@
-"""TimesFM 2.5 runtime, preflight checks, and probabilistic forecast types."""
+"""Selectable TimesFM runtime, preflight checks, and probabilistic forecast types."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from importlib import metadata
 from pathlib import Path
+from functools import wraps
+from itertools import chain
+from threading import RLock
+import gc
+import importlib
 import os
 import shutil
 import sys
-import threading
 from typing import Callable
 
 import numpy as np
 
-from ml.timesfm_profiles import TimesFMProfile
+from ml.timesfm_profiles import TimesFMProfile, _available_ram_gb as available_ram_gb
 
 
 DEFAULT_MODEL_ID = "google/timesfm-2.5-200m-pytorch"
+BACKEND_MODEL_IDS = {"2.5": DEFAULT_MODEL_ID, "3.0": "google/timesfm-3.0-pytorch"}
 QUANTILE_LEVELS = tuple(round(level / 10, 1) for level in range(1, 10))
 
 
 @dataclass(frozen=True)
 class TimesFMRuntimeConfig:
-    model_id: str = DEFAULT_MODEL_ID
+    model_id: str | None = None
     device: str = "auto"
     max_context: int = 1024
     forecast_context: int | None = None
@@ -32,12 +37,25 @@ class TimesFMRuntimeConfig:
     memory_target_fraction: float = 0.72
     profile_name: str = "custom"
     use_case: str = "interactive"
+    torch_compile: bool = True
+    backend: str = "2.5"
 
     @property
     def effective_context(self) -> int:
         return min(self.forecast_context or self.max_context, self.max_context)
 
     def __post_init__(self) -> None:
+        if self.backend not in BACKEND_MODEL_IDS:
+            raise ValueError("TimesFM backend must be 2.5 or 3.0")
+        if self.model_id is None:
+            object.__setattr__(self, "model_id", BACKEND_MODEL_IDS[self.backend])
+        elif self.model_id in BACKEND_MODEL_IDS.values() and self.model_id != BACKEND_MODEL_IDS[self.backend]:
+            raise ValueError("TimesFM model_id does not match the selected backend")
+        if self.backend == "3.0":
+            # The experimental adapter uses upstream eager inference only.
+            object.__setattr__(self, "torch_compile", False)
+            if self.effective_context > 15360:
+                raise ValueError("TimesFM 3.0 supports at most 15360 context bars")
         if self.max_context < 32:
             raise ValueError("TimesFM max_context must be at least 32")
         if self.effective_context < 32:
@@ -53,7 +71,8 @@ class TimesFMRuntimeConfig:
     def from_environment(cls) -> "TimesFMRuntimeConfig":
         """Build runtime settings from optional CAPITALISMAN_TIMESFM_* variables."""
         return cls(
-            model_id=os.getenv("CAPITALISMAN_TIMESFM_MODEL_ID", DEFAULT_MODEL_ID),
+            model_id=os.getenv("CAPITALISMAN_TIMESFM_MODEL_ID"),
+            backend=os.getenv("CAPITALISMAN_TIMESFM_BACKEND", "2.5"),
             device=os.getenv("CAPITALISMAN_TIMESFM_DEVICE", "auto"),
             max_context=int(os.getenv("CAPITALISMAN_TIMESFM_MAX_CONTEXT", "1024")),
             forecast_context=int(
@@ -70,9 +89,10 @@ class TimesFMRuntimeConfig:
         )
 
     @classmethod
-    def from_profile(cls, profile: TimesFMProfile) -> "TimesFMRuntimeConfig":
+    def from_profile(cls, profile: TimesFMProfile, backend: str | None = None) -> "TimesFMRuntimeConfig":
         return cls(
-            model_id=os.getenv("CAPITALISMAN_TIMESFM_MODEL_ID", DEFAULT_MODEL_ID),
+            model_id=os.getenv("CAPITALISMAN_TIMESFM_MODEL_ID") if backend is None else None,
+            backend=backend or os.getenv("CAPITALISMAN_TIMESFM_BACKEND", "2.5"),
             device=profile.device,
             max_context=profile.max_context,
             forecast_context=profile.forecast_context,
@@ -100,6 +120,20 @@ class TimesFMRuntimeStatus:
     gpu_free_memory_gb: float | None = None
     available_ram_gb: float | None = None
     free_disk_gb: float | None = None
+    model_device: str | None = None
+    backend: str = "2.5"
+
+
+class ForecastCancelled(RuntimeError):
+    """Cooperative cancellation checked before/after each inference chunk."""
+
+
+def _serialized(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return locked
 
 
 @dataclass(frozen=True)
@@ -119,19 +153,23 @@ class TimesFMForecast:
 
 
 def probability_above(forecast: TimesFMForecast, threshold: float) -> float:
-    """Approximate P(value > threshold) from forecast quantiles."""
+    """Uncalibrated quantile interpolation, clipped to the known 10–90% range.
+
+    Values at the clipping limits represent tail bounds, not exact tail
+    probabilities. Do not extrapolate the unobserved tails to certainty.
+    """
     values = np.array(
         [forecast.terminal_quantile(level) for level in QUANTILE_LEVELS],
         dtype=float,
     )
     levels = np.array(QUANTILE_LEVELS, dtype=float)
     values = np.maximum.accumulate(values)
-    cdf = float(np.interp(threshold, values, levels, left=0.0, right=1.0))
-    return max(0.0, min(1.0, 1.0 - cdf))
+    cdf = float(np.interp(threshold, values, levels, left=0.1, right=0.9))
+    return float(np.clip(1.0 - cdf, 0.1, 0.9))
 
 
 class TimesFMRuntime:
-    """Lazy TimesFM 2.5 runtime with explicit status and dependency checks."""
+    """Lazy TimesFM runtime with explicit status and dependency checks."""
 
     def __init__(
         self,
@@ -142,29 +180,29 @@ class TimesFMRuntime:
         self._model_factory = model_factory
         self._model = None
         self._status: TimesFMRuntimeStatus | None = None
-        # Streamlit serves sessions from multiple threads; without a lock two
-        # sessions can double-load the multi-GB model or race on _status.
-        self._load_lock = threading.Lock()
+        self._lock = RLock()
 
     @property
     def status(self) -> TimesFMRuntimeStatus:
         return self._status or self.preflight()
 
+    @_serialized
     def preflight(self) -> TimesFMRuntimeStatus:
+        if self._model is not None:
+            self._verify_model_device()
+            return self._status
         requested = self.config.device.lower()
         if requested not in {"auto", "cuda", "cpu"}:
             self._status = TimesFMRuntimeStatus(
-                "failed", f"Unsupported device '{requested}'", requested
+                "failed", f"Unsupported device '{requested}'", requested, backend=self.config.backend,
             )
             return self._status
-
-        if requested == "cpu":
-            os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
         status = TimesFMRuntimeStatus(
             state="checking",
             message="Checking TimesFM runtime dependencies",
             requested_device=requested,
+            backend=self.config.backend,
         )
         status.available_ram_gb = self._available_ram_gb()
         status.free_disk_gb = shutil.disk_usage(Path.home()).free / 1024**3
@@ -199,16 +237,17 @@ class TimesFMRuntime:
 
         try:
             status.timesfm_version = metadata.version("timesfm")
-            import timesfm
+            package = importlib.import_module("timesfm3" if self.config.backend == "3.0" else "timesfm")
         except (ImportError, metadata.PackageNotFoundError):
             status.state = "unavailable"
-            status.message = "TimesFM 2.5 is not installed in this environment"
+            status.message = f"TimesFM {self.config.backend} is not installed in this environment"
             self._status = status
             return status
 
-        if not hasattr(timesfm, "TimesFM_2p5_200M_torch"):
+        api = ("TimesFM3Evaluator", "ModelConfig") if self.config.backend == "3.0" else ("TimesFM_2p5_200M_torch",)
+        if not all(hasattr(package, name) for name in api):
             status.state = "incompatible"
-            status.message = "Installed TimesFM package does not provide the 2.5 PyTorch API"
+            status.message = f"Installed TimesFM package does not provide the {self.config.backend} PyTorch API"
             self._status = status
             return status
 
@@ -228,18 +267,78 @@ class TimesFMRuntime:
         self._status = status
         return status
 
+    def _load_production_model(self, device):
+        """Bind the upstream module before its checkpoint loader chooses a device.
+
+        TimesFM 2.0.2 auto-selects CUDA in its module constructor. Override only
+        this instance's metadata, not environment variables or torch.cuda APIs.
+        Its Hub loader constructs `cls` before calling load_checkpoint.
+        """
+        if self.config.backend == "3.0":
+            from ml.timesfm3_backend import TimesFM3Adapter
+            return TimesFM3Adapter(self.config, device)
+
+        import torch
+        import timesfm
+
+        target = torch.device("cuda:0" if device == "cuda" else "cpu")
+
+        class DeviceBoundTimesFM(timesfm.TimesFM_2p5_200M_torch):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.model.device = target
+                self.model.device_count = 1  # this adapter uses one device
+
+        # Construct parameters on CPU, then the upstream loader moves the
+        # checkpoint to the explicitly chosen device before torch.compile.
+        with torch.device("cpu"):
+            model = DeviceBoundTimesFM.from_pretrained(
+                self.config.model_id, torch_compile=self.config.torch_compile
+            )
+        model.compile(timesfm.ForecastConfig(
+            max_context=self.config.max_context, max_horizon=self.config.max_horizon,
+            normalize_inputs=True, per_core_batch_size=self.config.batch_size,
+            use_continuous_quantile_head=True, force_flip_invariance=True,
+            infer_is_positive=True, fix_quantile_crossing=True,
+        ))
+        return model
+
+    def _verify_model_device(self):
+        if self._model_factory is not None:
+            return  # injected test models make no tensor-device claim
+        module = self._model.model
+        observed = {str(tensor.device) for tensor in chain(module.parameters(), module.buffers())}
+        expected = "cuda:0" if self.status.resolved_device == "cuda" else "cpu"
+        input_device = self._model.device if self.config.backend == "3.0" else module.device
+        if observed != {expected} or str(input_device) != expected:
+            raise RuntimeError(f"TimesFM device mismatch: expected {expected}, tensors {sorted(observed)}, input device {input_device}")
+        self.status.model_device = expected
+
+    def _release_model(self):
+        self._model = None
+        if self._status is not None:
+            self._status.model_device = None
+        gc.collect()
+        torch = sys.modules.get("torch")
+        if torch is not None and self._status is not None and self._status.resolved_device == "cuda":
+            try:
+                torch.cuda.empty_cache()
+            except (AttributeError, RuntimeError):
+                pass
+
+    @_serialized
+    def unload(self):
+        self._release_model()
+        self._status = None
+
+    @_serialized
     def load(self) -> TimesFMRuntimeStatus:
         if self._model is not None:
             return self.status
-        with self._load_lock:
-            if self._model is not None:  # lost the race — another thread loaded
-                return self.status
-            return self._load_locked()
 
-    def _load_locked(self) -> TimesFMRuntimeStatus:
         if self._model_factory is not None:
             status = TimesFMRuntimeStatus(
-                "ready", "Injected model is ready", self.config.device, "test"
+                "ready", "Injected model is ready", self.config.device, "test", backend=self.config.backend,
             )
             self._status = status
         else:
@@ -251,79 +350,53 @@ class TimesFMRuntime:
             if self._model_factory is not None:
                 self._model = self._model_factory()
             else:
-                import torch
-                import timesfm
-
-                torch.set_float32_matmul_precision("high")
-                self._model = timesfm.TimesFM_2p5_200M_torch.from_pretrained(
-                    self.config.model_id
-                )
-                # Place the model on the preflight-resolved device explicitly
-                # rather than trusting library defaults; the wrapper may manage
-                # its own placement, so failures are tolerated and the real
-                # device is read back below for truthful reporting.
-                target_device = status.resolved_device
-                mover = getattr(self._model, "to", None)
-                if callable(mover) and target_device:
-                    try:
-                        mover(target_device)
-                    except Exception:
-                        pass
-                self._model.compile(
-                    timesfm.ForecastConfig(
-                        max_context=self.config.max_context,
-                        max_horizon=self.config.max_horizon,
-                        normalize_inputs=True,
-                        per_core_batch_size=self.config.batch_size,
-                        use_continuous_quantile_head=True,
-                        force_flip_invariance=True,
-                        infer_is_positive=True,
-                        fix_quantile_crossing=True,
-                    )
-                )
+                self._model = self._load_production_model(status.resolved_device)
+                self._verify_model_device()
             self._status.state = "loaded"
             self._status.message = "TimesFM model loaded successfully"
-            actual_device = self._model_device()
-            if actual_device is not None:
-                self._status.resolved_device = actual_device
         except Exception as error:
-            self._model = None
-            status.state = "failed"
+            self._release_model()
+            status.state = "out_of_memory" if self._is_oom(error) else "failed"
             status.message = f"TimesFM model load failed: {error}"
             self._status = status
             raise RuntimeError(status.message) from error
 
         return self._status
 
-    def _model_device(self) -> str | None:
-        """Read the device the loaded model actually lives on."""
-        params = getattr(self._model, "parameters", None)
-        if not callable(params):
-            return None
+    @staticmethod
+    def _is_oom(error):
+        return isinstance(error, MemoryError) or "out of memory" in str(error).lower()
+
+    @_serialized
+    def forecast(self, inputs: list[np.ndarray], horizon: int, *, cancel_check=None) -> list[TimesFMForecast]:
+        """Forecast atomically; cancellation takes effect between model calls.
+
+        A GPU kernel cannot be interrupted here. Use a process boundary when a
+        hard wall-time limit is required. No partial forecasts are returned.
+        """
+        def check_cancel():
+            if cancel_check is not None and cancel_check():
+                raise ForecastCancelled("TimesFM forecast cancelled")
+        check_cancel()
         try:
-            first = next(iter(params()), None)
-            return first.device.type if first is not None else None
-        except Exception:
-            return None
+            return self._forecast(inputs, horizon, check_cancel)
+        except ForecastCancelled:
+            if self._status is not None:
+                self._status.state = "cancelled"
+                self._status.message = "Forecast cancelled between inference chunks"
+            raise
+        except (RuntimeError, MemoryError) as error:
+            if self._status is not None:
+                if self._is_oom(error):
+                    self._release_model()
+                    self._status.state = "out_of_memory"
+                    self._status.message = "TimesFM exhausted memory; model released. Reduce batch/chunk size before retrying."
+                else:
+                    self._status.state = "failed"
+                    self._status.message = str(error)
+            raise RuntimeError(self._status.message if self._status is not None else str(error)) from error
 
-    def unload(self) -> None:
-        """Release the model reference and any GPU memory it holds."""
-        with self._load_lock:
-            if self._model is None:
-                return
-            self._model = None
-            try:
-                import torch
-
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except ImportError:
-                pass
-            if self._status is not None and self._status.state == "loaded":
-                self._status.state = "ready"
-                self._status.message = "Model unloaded; dependencies remain ready"
-
-    def forecast(self, inputs: list[np.ndarray], horizon: int) -> list[TimesFMForecast]:
+    def _forecast(self, inputs, horizon, check_cancel):
         if horizon < 1 or horizon > self.config.max_horizon:
             raise ValueError(
                 f"Horizon must be between 1 and {self.config.max_horizon}, got {horizon}"
@@ -343,14 +416,17 @@ class TimesFMRuntime:
             if not np.all(np.isfinite(values)):
                 raise ValueError(f"Input {index} contains NaN or infinite values")
         self.load()
+        self._verify_model_device()
         input_count = len(prepared)
         point_parts = []
         quantile_parts = []
         for start in range(0, input_count, self.config.chunk_size):
+            check_cancel()
             chunk = list(prepared[start : start + self.config.chunk_size])
             chunk_point, chunk_quantiles = self._model.forecast(
                 horizon=horizon, inputs=chunk
             )
+            check_cancel()
             point_parts.append(np.asarray(chunk_point, dtype=float))
             quantile_parts.append(np.asarray(chunk_quantiles, dtype=float))
         point = np.concatenate(point_parts, axis=0)
@@ -383,20 +459,17 @@ class TimesFMRuntime:
                     device=self.status.resolved_device,
                 )
             )
+        self.status.state = "loaded"
+        self.status.message = "TimesFM inference completed successfully"
         return forecasts
 
     @staticmethod
     def _available_ram_gb() -> float | None:
-        try:
-            pages = os.sysconf("SC_AVPHYS_PAGES")
-            page_size = os.sysconf("SC_PAGE_SIZE")
-            return pages * page_size / 1024**3
-        except (ValueError, OSError, AttributeError):
-            return None
+        return available_ram_gb()
 
 
 _runtime: TimesFMRuntime | None = None
-_runtime_lock = threading.Lock()
+_runtime_lock = RLock()
 
 
 def get_timesfm_runtime(config: TimesFMRuntimeConfig | None = None) -> TimesFMRuntime:
@@ -404,7 +477,7 @@ def get_timesfm_runtime(config: TimesFMRuntimeConfig | None = None) -> TimesFMRu
     with _runtime_lock:
         if _runtime is None or (config is not None and _runtime.config != config):
             if _runtime is not None:
-                _runtime.unload()  # don't orphan a loaded model in VRAM
+                _runtime.unload()
             _runtime = TimesFMRuntime(config)
         return _runtime
 

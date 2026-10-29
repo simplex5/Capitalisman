@@ -1,14 +1,13 @@
 """Causal strategy definitions and signal preparation for simulations."""
 
 import hashlib
-import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pandas as pd
 
-from config.settings import INDICATOR_CATEGORIES, INDICATOR_WEIGHTS, TIMESCALE_ADJUSTMENTS
 from indicators.registry import get_indicator
-from signals.base import CombinedSignal, SignalDirection, SignalResult
+from signals.base import CombinedSignal, SignalDirection
+from signals.combiner import ScoringPolicy, score_signals
 from simulation.models import StrategyDefinition
 
 
@@ -62,68 +61,16 @@ def _hold_signal(reason: str) -> CombinedSignal:
     )
 
 
-def _timescale(horizon_days: int) -> str:
-    if horizon_days <= 3:
-        return "short"
-    if horizon_days <= 10:
-        return "medium"
-    return "long"
-
-
-def _combine_at(
-    definition: StrategyDefinition,
-    indicators: dict,
-    computed_df: pd.DataFrame,
-    position: int,
-) -> CombinedSignal:
-    individual: list[SignalResult] = []
-    scores = {"BUY": 0.0, "SELL": 0.0, "HOLD": 0.0}
-    custom_weights = definition.weight_map
-    timescale = _timescale(definition.horizon_days)
-
-    for name, indicator in indicators.items():
-        signal = indicator.get_signal_for_horizon(
-            computed_df, horizon_days=definition.horizon_days, idx=position
-        )
-        individual.append(signal)
-        base_weight = custom_weights.get(name, INDICATOR_WEIGHTS.get(name, 1.0))
-        category = INDICATOR_CATEGORIES.get(name, indicator.category)
-        weight = base_weight * TIMESCALE_ADJUSTMENTS[timescale].get(category, 1.0)
-        scores[signal.direction.value] += signal.confidence * weight
-
-    buy_score = scores["BUY"]
-    sell_score = scores["SELL"]
-    directional_total = buy_score + sell_score
-    if directional_total == 0:
-        return CombinedSignal(
-            SignalDirection.HOLD,
-            0.0,
-            scores,
-            individual,
-            "No actionable signal from the selected indicators.",
-        )
-
-    top_direction = SignalDirection.BUY if buy_score >= sell_score else SignalDirection.SELL
-    top_score = max(buy_score, sell_score)
-    second_score = min(buy_score, sell_score)
-    separation = (top_score - second_score) / directional_total
-    if separation < definition.ambiguity_threshold:
-        return CombinedSignal(
-            SignalDirection.HOLD,
-            0.0,
-            scores,
-            individual,
-            f"Bullish and bearish scores are within {definition.ambiguity_threshold:.0%}.",
-        )
-
-    drivers = [s.indicator_name for s in individual if s.direction == top_direction]
-    return CombinedSignal(
-        top_direction,
-        top_score / directional_total,
-        scores,
-        individual,
-        f"{top_direction.value} led by {', '.join(drivers) or 'weighted indicators'}.",
-    )
+def _combine_at(definition, indicators, computed_df, position) -> CombinedSignal:
+    signals = [indicator.get_signal_for_horizon(
+        computed_df, horizon_days=definition.horizon_days, idx=position
+    ) for indicator in indicators.values()]
+    adjustments = dict(definition.category_adjustments)
+    policy = ScoringPolicy(tuple(
+        (name, definition.weight_map[name] * adjustments.get(indicator.category, 1.0))
+        for name, indicator in indicators.items()
+    ), definition.ambiguity_threshold, definition.min_evidence_strength)
+    return score_signals(signals, policy)
 
 
 def prepare_strategy(definition: StrategyDefinition, df: pd.DataFrame) -> PreparedStrategy:
@@ -149,7 +96,10 @@ def prepare_strategy(definition: StrategyDefinition, df: pd.DataFrame) -> Prepar
             "Simulation MVP does not support: " + ", ".join(sorted(unsupported))
         )
 
-    indicators = {name: get_indicator(name) for name in definition.indicator_names}
+    indicators = {
+        name: get_indicator(name).with_parameters(definition.parameters)
+        for name in definition.indicator_names
+    }
     unsafe = [
         name
         for name, indicator in indicators.items()
@@ -219,6 +169,8 @@ def build_custom_strategy(
     ambiguity_threshold: float = 0.10,
     weights: dict[str, float] | None = None,
     name: str = "Custom Strategy",
+    parameters: dict[str, float] | None = None,
+    min_evidence_strength: float = 0.15,
 ) -> StrategyDefinition:
     selected = tuple(indicator_names)
     unsupported = set(selected) - set(CORE_SIMULATION_INDICATORS)
@@ -230,22 +182,11 @@ def build_custom_strategy(
         for indicator in selected
         if indicator in supplied_weights
     )
-    fingerprint_payload = json.dumps(
-        {
-            "indicators": selected,
-            "weights": selected_weights,
-            "horizon_days": horizon_days,
-            "ambiguity_threshold": ambiguity_threshold,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    fingerprint = hashlib.sha256(fingerprint_payload.encode("utf-8")).hexdigest()[:12]
-    return StrategyDefinition(
-        strategy_id=f"custom_{fingerprint}",
-        name=name,
-        indicator_names=selected,
-        weights=selected_weights,
-        horizon_days=horizon_days,
+    definition = StrategyDefinition(
+        strategy_id="custom", name=name, indicator_names=selected,
+        weights=selected_weights, horizon_days=horizon_days,
         ambiguity_threshold=ambiguity_threshold,
+        parameters=tuple(sorted((parameters or {}).items())),
+        min_evidence_strength=min_evidence_strength,
     )
+    return replace(definition, strategy_id=f"custom_{definition.configuration_id[:12]}")

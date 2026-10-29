@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
+from pathlib import Path
 from typing import Any
 
 
@@ -56,6 +57,16 @@ class TimesFMProfile:
 
 
 def _available_ram_gb() -> float | None:
+    # Linux distinguishes reclaimable cache from genuinely unavailable memory.
+    # SC_AVPHYS_PAGES only counts free pages and can reject a healthy cached host.
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                amount, unit = line.split()[1:]
+                if unit == "kB" and int(amount) >= 0:
+                    return int(amount) / 1024**2
+    except (ValueError, OSError):
+        pass
     try:
         pages = os.sysconf("SC_AVPHYS_PAGES")
         page_size = os.sysconf("SC_PAGE_SIZE")

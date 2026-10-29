@@ -1,6 +1,8 @@
 """Base indicator abstract class."""
 
 from abc import ABC, abstractmethod
+from copy import copy
+from types import MappingProxyType
 from typing import Any
 
 import pandas as pd
@@ -10,6 +12,21 @@ from signals.base import SignalResult
 
 class BaseIndicator(ABC):
     """Abstract base class for all technical indicators."""
+
+    historical_safe = False  # opt in only with a tested causal input contract
+
+    def with_parameters(self, parameters) -> "BaseIndicator":
+        """Return a separate indicator bound to immutable run settings."""
+        indicator = copy(self)
+        indicator._parameters = MappingProxyType(dict(parameters))
+        return indicator
+
+    def setting(self, name: str):
+        parameters = getattr(self, "_parameters", None)
+        if parameters is not None:
+            return parameters[name]
+        from config.overrides import get_setting
+        return get_setting(name)
 
     @property
     @abstractmethod
@@ -29,7 +46,7 @@ class BaseIndicator(ABC):
     @property
     def backtest_safe(self) -> bool:
         """Whether historical values are available without revision look-ahead."""
-        return True
+        return self.historical_safe
 
     def supports_backtest_horizon(self, horizon_days: int) -> bool:
         """Whether this indicator can be evaluated at the requested horizon."""
@@ -40,6 +57,12 @@ class BaseIndicator(ABC):
     ) -> pd.DataFrame:
         """Compute values for a requested horizon when an indicator needs it."""
         return self.compute(df)
+
+    def compute_for_backtest(
+        self, df: pd.DataFrame, horizon_days: int, cost_per_trade_pct: float
+    ) -> pd.DataFrame:
+        """Compute historical values using the run's execution cost policy."""
+        return self.compute_for_horizon(df, horizon_days)
 
     def get_signal_for_horizon(
         self, df: pd.DataFrame, horizon_days: int, idx: int = -1

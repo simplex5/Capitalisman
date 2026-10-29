@@ -12,6 +12,7 @@ from config.settings import (
     CACHE_TTL_SECONDS,
     DEFAULT_INTERVAL,
     DEFAULT_PERIOD,
+    INTRADAY_MAX_PERIODS,
     PERIOD_CALENDAR_DAYS,
     WARMUP_FETCH_PERIOD,
 )
@@ -192,6 +193,14 @@ def fetch_ohlcv(
 
     Raises ValueError if ticker is invalid or no data returned.
     """
+    limit = INTRADAY_MAX_PERIODS.get(interval)
+    if limit is not None:
+        limit_days = int(limit.removesuffix("d"))
+        requested_days = PERIOD_CALENDAR_DAYS.get(period)
+        if period.endswith("d") and period[:-1].isdigit():
+            requested_days = int(period[:-1])
+        if period == "max" or (requested_days is not None and requested_days > limit_days):
+            period = limit
     return _fetch_raw(ticker, period, interval).copy()
 
 

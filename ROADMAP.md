@@ -55,39 +55,46 @@ workflow that explains:
 
 #### Phase 0 — Correctness and Runtime Hardening
 
-- [ ] Replace hard 0%/100% probability extrapolation outside q10-q90 with honest
+- [x] Replace hard 0%/100% probability extrapolation outside q10-q90 with honest
       tail semantics, then label uncalibrated values as model-derived scores
       until held-out reliability calibration exists.
-- [ ] Make transaction-cost treatment symmetric by calculating the short-side
-      probability of finishing below `current_price * (1 - cost)`.
-- [ ] Remove process-global `CUDA_VISIBLE_DEVICES` mutation and support explicit,
+- [x] Make transaction-cost treatment symmetric using long/short break-even
+      thresholds derived from fees on both fills, with the backtest's selected cost.
+- [x] Remove process-global `CUDA_VISIBLE_DEVICES` mutation and support explicit,
       reversible Auto, CUDA, and CPU selection with actual loaded-device checks.
-- [ ] Record actual model/tensor device, peak allocated VRAM, compilation time,
+- [x] Record and verify actual model/tensor device before inference.
+- [ ] Record peak allocated VRAM, compilation time,
       inference time, and realized series throughput in runtime status.
 - [ ] Persist empirical profile results using a fingerprint of GPU UUID, driver,
       CUDA, PyTorch, TimesFM, model, context, horizon, and workload; invalidate
       stale results automatically.
 - [ ] Run and record real profile smoke tests and empirical probes on the target
       RTX 5090 environment, plus at least one lower-VRAM CUDA configuration.
-- [ ] Add explicit cancellation and safe out-of-memory recovery for long research
-      and backtest jobs.
+- [x] Release the runtime model on OOM and support cancellation between chunks;
+      bound suite workers with process deadlines and retain failed job records.
+- [ ] Expose cancellation/progress throughout interactive backtest jobs.
 
 #### Phase 1 — Establish Measurable Value
 
-- [ ] Add drift, moving-average, exponential-smoothing, and simple autoregressive
-      baselines alongside the existing last-price baseline.
+- [x] Add fixed drift, moving-average and exponential-smoothing baselines on the
+      same held-out origins as TimesFM.
+- [ ] Add a simple autoregressive baseline.
+- [x] Automate fixed asset/horizon suites over archived local inputs, with job/time
+      limits, per-job archives and a consolidated summary retaining failures.
 - [ ] Run reproducible multi-asset benchmark suites across equities, indices,
       rates, commodities, and crypto.
 - [ ] Evaluate multiple forecast horizons and minimum-context lengths without
       selecting settings on the final test period.
-- [ ] Store benchmark inputs, model/package versions, configuration, metrics, and
+- [x] Store benchmark inputs, model/package versions, configuration, metrics, and
       per-origin results as versioned research artifacts.
 - [ ] Add a benchmark results page that clearly shows whether TimesFM beats each
       baseline and where it fails.
 - [ ] Define minimum acceptance criteria before increasing TimesFM's voting weight
       or presenting it as more than experimental.
-- [ ] Add block-bootstrap confidence intervals and appropriate forecast-comparison
-      tests so small apparent improvements are not treated as established edge.
+- [x] Add paired block-bootstrap intervals for forecast MAE differences, with
+      overlap-aware blocks and explicit insufficient-sample results.
+- [ ] Validate block-length sensitivity and add appropriate forecast-comparison
+      tests/multiplicity controls before claiming an established edge.
 - [ ] Account for overlapping forecast targets when selecting origin spacing,
       estimating uncertainty, and splitting train/calibration/test periods.
 
@@ -134,8 +141,8 @@ workflow that explains:
       status beside every forecast.
 - [x] Let users select Auto, Fast, Balanced, and Thorough workload profiles and
       inspect selected context, batch, chunk, device, and use case.
-- [ ] Let users select Auto, CUDA, or CPU and inspect model/cache information from
-      the interface.
+- [x] Let users select Auto, CUDA, or CPU and inspect the verified tensor device.
+- [ ] Add model/cache inventory information to the interface.
 - [ ] Provide cancellable progress, estimated workload, and bounded benchmark
       presets for expensive local analysis.
 - [ ] Export a self-contained forecast research report with assumptions,
@@ -145,8 +152,8 @@ workflow that explains:
 
 - [ ] Add a signed contribution chart for every indicator.
 - [ ] Separate directional agreement, historical reliability, and expected move.
-- [ ] Prevent a single weak actionable vote from appearing as 100% directional
-      agreement merely because every other indicator returned HOLD.
+- [x] Separate evidence strength from agreement and gate BUY/SELL on a captured
+      minimum evidence floor, so a lone weak vote remains HOLD.
 - [ ] Summarize conflicting indicator groups in plain language.
 - [ ] Add approachable explanations for backtest metrics and assumptions.
 - [ ] Display data freshness, missing data, and unavailable indicators.
@@ -220,7 +227,7 @@ workflow that explains:
 - [ ] Prevent thresholds or weights selected on one period from being evaluated
       as though they were chosen independently on that same period.
 - [ ] Add parameter-sensitivity charts to reveal fragile configurations.
-- [ ] Store reproducible configuration identifiers with every backtest.
+- [x] Store effective settings and configuration/data identifiers with backtests.
 
 ### Regime Analysis
 
@@ -251,12 +258,12 @@ workflow that explains:
 
 ## Backtest and Market-Data Integrity
 
-- [ ] Replace trade-return Sharpe approximation with a daily marked-to-market
+- [x] Replace trade-return Sharpe approximation with a daily marked-to-market
       equity series that represents cash and open long/short positions.
 - [ ] Model financing, borrow availability and fees, dividends, splits, delisting
       returns, trading halts, and asset-specific transaction costs where relevant.
-- [ ] Store immutable, timestamped market-data snapshots so revised adjusted
-      history cannot silently change a previously reported result.
+- [x] Export versioned, checksummed archives containing the actual market data,
+      computed indicators, configuration, daily equity and results used by a run.
 - [ ] Add survivorship-bias-aware historical universes for multi-asset research
       instead of evaluating only today's constituents and watchlists.
 - [ ] Validate chronological ordering, duplicate timestamps, interval regularity,
@@ -264,8 +271,8 @@ workflow that explains:
       treatment at the data-provider boundary.
 - [ ] Distinguish data-provider failure, missing optional data, insufficient
       history, and genuine neutral signals instead of broadly swallowing errors.
-- [ ] Add reproducible execution assumptions and configuration identifiers to
-      every exported backtest report.
+- [x] Include execution assumptions, configuration identifiers, source identity
+      and package versions in research archives; replay stored computations offline.
 
 ## Technical Foundation
 
@@ -278,8 +285,9 @@ workflow that explains:
 - [ ] Add UI integration tests for navigation, saved strategies, reset behavior,
       and stale-state prevention.
 - [ ] Add performance benchmarks for indicator computation and watchlist scans.
-- [ ] Add continuous integration with formatting, linting, type checking, unit
-      tests, and optional TimesFM API-contract tests that do not download weights.
+- [x] Add CI with a hashed dependency lock, dependency checks, Ruff correctness
+      linting, offline unit/UI tests and injected TimesFM contract tests.
+- [ ] Expand CI to static type checking and broader formatting/style checks.
 - [ ] Add an opt-in CUDA integration test matrix for supported runtime profiles,
       including output equivalence across chunk and batch sizes.
 

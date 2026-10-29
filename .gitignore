@@ -10,6 +10,7 @@ build/
 # Virtual environments
 venv/
 .venv/
+.venv-timesfm3/
 env/
 
 # Streamlit
@@ -32,3 +33,8 @@ Thumbs.db
 
 # simplex_mind brain (local ticket DB — never commit)
 database/
+# simplex_mind agent scratch papers (never commit)
+.work/
+
+# Local research data and generated archives
+research_runs/

@@ -1,7 +1,8 @@
-streamlit==1.59.2
-yfinance==1.5.1
-ta==0.11.0
-plotly==6.9.0
-pandas==3.0.3
-numpy==2.5.1
-scipy==1.18.0
+streamlit>=1.28.0
+yfinance>=1.2.0,<2
+ta>=0.11.0
+plotly>=5.18.0
+pandas>=2.0.0
+numpy>=1.24.0
+scipy>=1.10.0
+pyarrow>=14.0.1

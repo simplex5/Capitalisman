@@ -51,6 +51,8 @@ class VPIN(BaseIndicator):
     Low VPIN (<−1σ) → calm, uninformed flow → mild BUY
     """
 
+    historical_safe = True
+
     BUCKET_COUNT = 50
     LOOKBACK_WINDOW = 50
 

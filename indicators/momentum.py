@@ -5,8 +5,6 @@ from typing import Any
 import pandas as pd
 import ta
 
-from config import settings
-from config.overrides import get_setting
 from indicators.base import BaseIndicator
 from indicators.registry import register
 from signals.base import SignalDirection, SignalResult
@@ -14,6 +12,8 @@ from signals.base import SignalDirection, SignalResult
 
 @register
 class RSI(BaseIndicator):
+
+    historical_safe = True
     @property
     def name(self) -> str:
         return "RSI"
@@ -24,14 +24,14 @@ class RSI(BaseIndicator):
 
     @property
     def lookback(self) -> int:
-        return settings.RSI_PERIOD
+        return self.setting('RSI_PERIOD')
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         if len(df) < self.lookback:
             df["RSI"] = float("nan")
             return df
-        df["RSI"] = ta.momentum.rsi(df["Close"], window=settings.RSI_PERIOD)
+        df["RSI"] = ta.momentum.rsi(df["Close"], window=self.setting('RSI_PERIOD'))
         return df
 
     def get_signal(self, df: pd.DataFrame, idx: int = -1) -> SignalResult:
@@ -43,8 +43,8 @@ class RSI(BaseIndicator):
         if pd.isna(rsi):
             return SignalResult(self.name, SignalDirection.HOLD, 0.0, "Insufficient data")
 
-        rsi_oversold = get_setting("RSI_OVERSOLD")
-        rsi_overbought = get_setting("RSI_OVERBOUGHT")
+        rsi_oversold = self.setting("RSI_OVERSOLD")
+        rsi_overbought = self.setting("RSI_OVERBOUGHT")
 
         if rsi < rsi_oversold:
             # Deeper oversold = higher confidence
@@ -78,6 +78,8 @@ class RSI(BaseIndicator):
 
 @register
 class Stochastic(BaseIndicator):
+
+    historical_safe = True
     @property
     def name(self) -> str:
         return "Stochastic"
@@ -88,7 +90,7 @@ class Stochastic(BaseIndicator):
 
     @property
     def lookback(self) -> int:
-        return settings.STOCH_K + settings.STOCH_D
+        return self.setting('STOCH_K') + self.setting('STOCH_D')
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
@@ -98,8 +100,8 @@ class Stochastic(BaseIndicator):
             return df
         stoch = ta.momentum.StochasticOscillator(
             df["High"], df["Low"], df["Close"],
-            window=settings.STOCH_K,
-            smooth_window=settings.STOCH_SMOOTH,
+            window=self.setting('STOCH_K'),
+            smooth_window=self.setting('STOCH_SMOOTH'),
         )
         df["Stoch_K"] = stoch.stoch()
         df["Stoch_D"] = stoch.stoch_signal()
@@ -122,8 +124,8 @@ class Stochastic(BaseIndicator):
         if pd.isna(prev_k) or pd.isna(prev_d):
             return SignalResult(self.name, SignalDirection.HOLD, 0.0, "Insufficient data")
 
-        stoch_oversold = get_setting("STOCH_OVERSOLD")
-        stoch_overbought = get_setting("STOCH_OVERBOUGHT")
+        stoch_oversold = self.setting("STOCH_OVERSOLD")
+        stoch_overbought = self.setting("STOCH_OVERBOUGHT")
 
         # Bullish: %K crosses above %D in oversold zone
         if k < stoch_oversold and prev_k <= prev_d and k > d:

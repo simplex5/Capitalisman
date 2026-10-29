@@ -1,10 +1,10 @@
 -r requirements.txt
 
 # TradingView-style charts (Plotly is used when this is absent)
-lightweight-charts==2.1
+lightweight-charts>=2.0
 
 # FRED economic data (also requires a free FRED_API_KEY)
-fredapi==0.5.2
+fredapi>=0.5.0
 
 # TimesFM and its accelerator stack use a separate Conda environment. See
 # environment-timesfm.yml, requirements-timesfm.txt, and docs/TIMESFM.md.

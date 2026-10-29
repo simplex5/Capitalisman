@@ -1,10 +1,12 @@
 """Tests for supported simulation strategy construction and preparation."""
 
 import pytest
+from dataclasses import asdict
+import json
 
 from signals.base import SignalDirection
 from simulation.engine import HistoricalSimulationEngine
-from simulation.models import SimulationConfig
+from simulation.models import SimulationConfig, StrategyDefinition
 from simulation.strategies import (
     CORE_SIMULATION_INDICATORS,
     build_custom_strategy,
@@ -91,3 +93,48 @@ def test_warmup_bars_are_explicitly_hold(ohlcv_100):
         signal.direction == SignalDirection.HOLD
         for signal in prepared.signals[: prepared.required_lookback]
     )
+
+
+def test_prepared_signals_ignore_session_and_later_global_changes(monkeypatch, ohlcv_200_up):
+    from config import settings
+    definition = build_custom_strategy(list(CORE_SIMULATION_INDICATORS))
+    original = prepare_strategy(definition, ohlcv_200_up)
+    monkeypatch.setattr("config.overrides.get_setting", lambda name: (_ for _ in ()).throw(
+        AssertionError("A replay must not read session state")
+    ))
+    monkeypatch.setattr(settings, "RSI_PERIOD", 5)
+    monkeypatch.setattr(settings, "RSI_OVERSOLD", 50)
+    monkeypatch.setitem(settings.INDICATOR_WEIGHTS, "RSI", 5)
+    monkeypatch.setitem(settings.TIMESCALE_ADJUSTMENTS["medium"], "momentum", 10)
+    replay = prepare_strategy(definition, ohlcv_200_up)
+    assert replay.signals == original.signals
+    assert replay.definition.configuration_id == original.definition.configuration_id
+
+
+def test_indicator_parameters_change_configuration_identity_and_survive_serialization():
+    original = build_custom_strategy(["RSI"])
+    changed = build_custom_strategy(["RSI"], parameters={"RSI_OVERSOLD": 40})
+    restored = StrategyDefinition(**json.loads(json.dumps(asdict(changed))))
+    assert original.strategy_id != changed.strategy_id
+    assert original.configuration_id != changed.configuration_id
+    assert restored == changed
+
+
+@pytest.mark.parametrize("parameters", [
+    {"RSI_OVERSOLD": 80}, {"RSI_PERIOD": 1.5}, {"UNKNOWN": 1}, {"BB_STD": float("nan")},
+])
+def test_invalid_indicator_parameters_are_rejected(parameters):
+    with pytest.raises(ValueError):
+        build_custom_strategy(["RSI"], parameters=parameters)
+
+
+def test_simulation_and_prediction_share_scoring_with_identical_policy(ohlcv_100):
+    from indicators.registry import get_indicator
+    from signals.combiner import ScoringPolicy, combine_signals
+    definition = build_custom_strategy(["RSI", "MACD"], weights={"RSI": 2, "MACD": 0.5})
+    prepared = prepare_strategy(definition, ohlcv_100)
+    indicators = {name: get_indicator(name).with_parameters(definition.parameters)
+                  for name in definition.indicator_names}
+    policy = ScoringPolicy(definition.weights, definition.ambiguity_threshold)  # medium scale = 1
+    prediction = combine_signals(indicators, ohlcv_100, policy=policy)
+    assert prediction == prepared.signals[-1]

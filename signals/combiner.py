@@ -1,11 +1,42 @@
 """Weighted majority voting signal combiner."""
 
 import pandas as pd
+import math
+from dataclasses import dataclass
 
 from config.overrides import get_setting
-from config.settings import INDICATOR_CATEGORIES, TIMESCALE_ADJUSTMENTS
+from config.settings import MIN_EVIDENCE_STRENGTH, TIMESCALE_ADJUSTMENTS
 from indicators.base import BaseIndicator
 from signals.base import CombinedSignal, SignalDirection, SignalResult
+
+
+@dataclass(frozen=True)
+class ScoringPolicy:
+    """Effective horizon-adjusted weights and ambiguity rule for one run."""
+
+    weights: tuple[tuple[str, float], ...]
+    ambiguity_threshold: float
+    min_evidence_strength: float = MIN_EVIDENCE_STRENGTH
+
+    def __post_init__(self):
+        object.__setattr__(self, "weights", tuple((name, value) for name, value in self.weights))
+        if len(dict(self.weights)) != len(self.weights):
+            raise ValueError("Scoring weights must be unique")
+        if any(not math.isfinite(value) or value < 0 for _, value in self.weights):
+            raise ValueError("Scoring weights must be finite and non-negative")
+        if not math.isfinite(self.ambiguity_threshold) or not 0 <= self.ambiguity_threshold < 1:
+            raise ValueError("Ambiguity threshold must be in [0, 1)")
+        if not math.isfinite(self.min_evidence_strength) or not 0 <= self.min_evidence_strength <= 1:
+            raise ValueError("Minimum evidence strength must be in [0, 1]")
+
+    @classmethod
+    def from_indicators(cls, indicators, horizon_days):
+        base = get_setting("INDICATOR_WEIGHTS")
+        adjustments = TIMESCALE_ADJUSTMENTS[_get_timescale(horizon_days)]
+        return cls(tuple(
+            (name, base.get(name, 1.0) * adjustments.get(indicator.category, 1.0))
+            for name, indicator in indicators.items()
+        ), get_setting("AMBIGUITY_THRESHOLD"), get_setting("MIN_EVIDENCE_STRENGTH"))
 
 
 def _get_timescale(horizon_days: int) -> str:
@@ -14,15 +45,6 @@ def _get_timescale(horizon_days: int) -> str:
     elif horizon_days <= 10:
         return "medium"
     return "long"
-
-
-def _get_adjusted_weight(indicator_name: str, horizon_days: int) -> float:
-    weights = get_setting("INDICATOR_WEIGHTS")
-    base_weight = weights.get(indicator_name, 1.0)
-    category = INDICATOR_CATEGORIES.get(indicator_name, "trend")
-    timescale = _get_timescale(horizon_days)
-    adjustment = TIMESCALE_ADJUSTMENTS[timescale].get(category, 1.0)
-    return base_weight * adjustment
 
 
 def _build_reasoning(
@@ -82,6 +104,7 @@ def combine_signals(
     horizon_days: int = 5,
     idx: int = -1,
     precomputed: bool = False,
+    policy: ScoringPolicy | None = None,
 ) -> CombinedSignal:
     """Combine signals from multiple indicators using weighted voting.
 
@@ -96,7 +119,7 @@ def combine_signals(
         CombinedSignal with combined direction, confidence, and breakdown.
     """
     individual_signals: list[SignalResult] = []
-    direction_scores: dict[str, float] = {"BUY": 0.0, "SELL": 0.0, "HOLD": 0.0}
+    policy = policy or ScoringPolicy.from_indicators(indicators, horizon_days)
 
     working_df = df if precomputed else df.copy()
 
@@ -108,8 +131,20 @@ def combine_signals(
         )
         individual_signals.append(signal)
 
-        weight = _get_adjusted_weight(name, horizon_days)
-        score = signal.confidence * weight
+    return score_signals(individual_signals, policy)
+
+
+def score_signals(individual_signals: list[SignalResult], policy: ScoringPolicy) -> CombinedSignal:
+    """Pure scorer shared by prediction, historical replay, and backtesting."""
+    direction_scores = {"BUY": 0.0, "SELL": 0.0, "HOLD": 0.0}
+    weights = dict(policy.weights)
+    names = [signal.indicator_name for signal in individual_signals]
+    if len(set(names)) != len(names) or set(names) - weights.keys():
+        raise ValueError("Signals must have unique names present in the scoring policy")
+    for signal in individual_signals:
+        if not math.isfinite(signal.confidence) or not 0 <= signal.confidence <= 1:
+            raise ValueError("Signal confidence must be finite and in [0, 1]")
+        score = signal.confidence * weights[signal.indicator_name]
         # HOLD signals are recorded for display but don't participate in
         # directional voting — they represent absence of a signal, not a
         # competing direction.
@@ -119,14 +154,9 @@ def combine_signals(
     buy_score = direction_scores["BUY"]
     sell_score = direction_scores["SELL"]
     directional_total = buy_score + sell_score
-
-    # Maximum possible weighted conviction: every indicator voting one way at
-    # full strength. Confidence normalizes against this rather than the
-    # directional votes alone, so broad abstention lowers the score — one weak
-    # voter among many silent indicators must not read as near-100% agreement.
-    total_possible = sum(
-        _get_adjusted_weight(name, horizon_days) for name in indicators
-    )
+    total_weight = sum(weights.values())
+    if not all(math.isfinite(value) for value in (*direction_scores.values(), directional_total, total_weight)):
+        raise ValueError("Combined scores must be finite")
 
     if directional_total == 0:
         return CombinedSignal(
@@ -141,16 +171,25 @@ def combine_signals(
 
     top_dir, top_score = ("BUY", buy_score) if buy_score >= sell_score else ("SELL", sell_score)
     second_score = sell_score if top_dir == "BUY" else buy_score
+    agreement = top_score / directional_total
+    evidence = directional_total / total_weight
+    coverage = sum(weights[s.indicator_name] for s in individual_signals
+                   if s.direction != SignalDirection.HOLD and s.confidence > 0) / total_weight
 
     # If BUY and SELL scores are too close, signal is ambiguous -> HOLD
-    if (top_score - second_score) / directional_total < get_setting("AMBIGUITY_THRESHOLD"):
+    if evidence < policy.min_evidence_strength or top_score == second_score or (top_score - second_score) / directional_total < policy.ambiguity_threshold:
         confidence = 0.0
         direction = SignalDirection.HOLD
     else:
         direction = SignalDirection(top_dir)
-        confidence = top_score / total_possible if total_possible > 0 else 0.0
+        confidence = top_score / directional_total
 
     reasoning = _build_reasoning(direction, confidence, individual_signals, buy_score, sell_score)
+    if evidence < policy.min_evidence_strength:
+        reasoning = (f"Insufficient directional evidence ({evidence:.1%}; "
+                     f"minimum {policy.min_evidence_strength:.1%}). "
+                     f"Actionable votes agree {agreement:.0%}, but cover only {coverage:.0%} "
+                     "of selected indicator weight.")
 
     return CombinedSignal(
         direction=direction,
@@ -158,4 +197,7 @@ def combine_signals(
         scores=direction_scores,
         individual_signals=individual_signals,
         reasoning=reasoning,
+        directional_agreement=agreement,
+        evidence_strength=evidence,
+        actionable_coverage=coverage,
     )

@@ -5,7 +5,6 @@ from typing import Any
 import pandas as pd
 import ta
 
-from config import settings
 from indicators.base import BaseIndicator
 from indicators.registry import register
 from signals.base import SignalDirection, SignalResult
@@ -13,6 +12,8 @@ from signals.base import SignalDirection, SignalResult
 
 @register
 class BollingerBands(BaseIndicator):
+
+    historical_safe = True
     @property
     def name(self) -> str:
         return "Bollinger Bands"
@@ -23,7 +24,7 @@ class BollingerBands(BaseIndicator):
 
     @property
     def lookback(self) -> int:
-        return settings.BB_PERIOD
+        return self.setting('BB_PERIOD')
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
@@ -34,7 +35,7 @@ class BollingerBands(BaseIndicator):
             df["BB_pband"] = float("nan")
             return df
         bb = ta.volatility.BollingerBands(
-            df["Close"], window=settings.BB_PERIOD, window_dev=settings.BB_STD
+            df["Close"], window=self.setting('BB_PERIOD'), window_dev=self.setting('BB_STD')
         )
         df["BB_upper"] = bb.bollinger_hband()
         df["BB_middle"] = bb.bollinger_mavg()

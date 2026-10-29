@@ -3,9 +3,12 @@
 # Falls back to the plain app venv when the ML environment is not installed.
 # All CAPITALISMAN_TIMESFM_* values can be overridden per-launch, e.g.:
 #   CAPITALISMAN_TIMESFM_MAX_CONTEXT=1024 ./run-timesfm.sh
-# Note: the in-app TimesFM Runtime Profile picker rebuilds the runtime config
-# from detected hardware, so these env values govern scripts/benchmarks and
-# non-UI paths; in the UI only MODEL_ID and DEVICE=cpu are honored.
+# Note: in the UI only CAPITALISMAN_TIMESFM_DEVICE is honored: its value
+# (auto, cpu or cuda) preselects the TimesFM Device box. Context, batch size
+# and the rest come from the Runtime Profile picker and detected hardware, and
+# MODEL_ID is ignored because the UI always names a backend. The other values
+# apply only where the runtime is built from the environment
+# (TimesFMRuntimeConfig.from_environment).
 set -euo pipefail
 cd "$(dirname "$0")"
 

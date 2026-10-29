@@ -17,7 +17,24 @@ class Trade:
     predicted_direction: str
     actual_direction: str
     correct: bool
-    pnl_pct: float  # percent return
+    pnl_pct: float  # fractional return on entry equity, after both fills
+    signal_date: pd.Timestamp | None = None
+    target_date: pd.Timestamp | None = None
+    quantity: float = 0.0
+    entry_equity: float | None = None
+    pnl_dollars: float | None = None
+    fees: float = 0.0
+    exit_reason: str = "horizon"
+
+
+@dataclass(frozen=True)
+class PortfolioSnapshot:
+    timestamp: pd.Timestamp
+    cash: float
+    quantity: float
+    close_price: float
+    equity: float
+    exposed: bool  # holding at any time during this bar, including same-bar exits
 
 
 @dataclass
@@ -33,18 +50,25 @@ class BacktestReport:
     evaluation_start: pd.Timestamp | None = None
     evaluation_end: pd.Timestamp | None = None
     excluded_indicators: list[str] = field(default_factory=list)
+    snapshots: list[PortfolioSnapshot] = field(default_factory=list)
+    completion_reason: str = "end_of_data"
+    cost_per_trade_pct: float = 0.0
+    configuration: dict = field(default_factory=dict)
+    configuration_id: str = ""
+    data_fingerprint: str = ""
+    computed_data: pd.DataFrame = field(default_factory=pd.DataFrame, repr=False)
 
     # Computed metrics
     total_trades: int = 0
     winning_trades: int = 0  # trades with positive P&L
-    losing_trades: int = 0   # trades with negative P&L (flat trades are neither)
+    losing_trades: int = 0   # trades with negative or zero P&L
     win_rate: float = 0.0    # winning_trades / total_trades
     correct_predictions: int = 0   # direction prediction matched actual
     prediction_accuracy: float = 0.0  # correct_predictions / total_trades
     cumulative_return: float = 0.0
     max_drawdown: float = 0.0
-    sharpe_ratio: float | None = None   # None = too few trades to estimate
-    profit_factor: float | None = None  # None = no losing trades
+    sharpe_ratio: float = 0.0
+    profit_factor: float = 0.0
     exposure_pct: float = 0.0
     benchmark_return: float | None = None  # buy-and-hold return over same period
 

@@ -46,7 +46,10 @@ def create_tv_chart(
     # Prepare data for lightweight-charts (needs 'time', 'open', 'high', 'low', 'close')
     chart_df = df[["Open", "High", "Low", "Close"]].copy()
     chart_df.columns = ["open", "high", "low", "close"]
-    if hasattr(df.index, "strftime"):
+    if isinstance(df.index, pd.DatetimeIndex):
+        # Pass real timestamps so minute/hour bars retain distinct times.
+        chart_df["time"] = df.index.as_unit("ns")
+    elif hasattr(df.index, "strftime"):
         chart_df["time"] = df.index.strftime("%Y-%m-%d")
     else:
         chart_df["time"] = df.index.astype(str)
@@ -64,7 +67,6 @@ def create_tv_chart(
                     "time": chart_df["time"],
                     col_name: df[col_name].values,
                 }).dropna()
-                line_df.columns = ["time", "value"]
                 line.set(line_df)
 
     return chart

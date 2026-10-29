@@ -5,7 +5,6 @@ from typing import Any
 import pandas as pd
 import ta
 
-from config import settings
 from indicators.base import BaseIndicator
 from indicators.registry import register
 from signals.base import SignalDirection, SignalResult
@@ -13,6 +12,8 @@ from signals.base import SignalDirection, SignalResult
 
 @register
 class SMACrossover(BaseIndicator):
+
+    historical_safe = True
     @property
     def name(self) -> str:
         return "SMA Crossover"
@@ -23,7 +24,7 @@ class SMACrossover(BaseIndicator):
 
     @property
     def lookback(self) -> int:
-        return settings.SMA_LONG
+        return self.setting('SMA_LONG')
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
@@ -31,8 +32,8 @@ class SMACrossover(BaseIndicator):
             df["SMA_short"] = float("nan")
             df["SMA_long"] = float("nan")
             return df
-        df["SMA_short"] = ta.trend.sma_indicator(df["Close"], window=settings.SMA_SHORT)
-        df["SMA_long"] = ta.trend.sma_indicator(df["Close"], window=settings.SMA_LONG)
+        df["SMA_short"] = ta.trend.sma_indicator(df["Close"], window=self.setting('SMA_SHORT'))
+        df["SMA_long"] = ta.trend.sma_indicator(df["Close"], window=self.setting('SMA_LONG'))
         return df
 
     def get_signal(self, df: pd.DataFrame, idx: int = -1) -> SignalResult:
@@ -57,24 +58,24 @@ class SMACrossover(BaseIndicator):
             spread = abs(sma_s - sma_l) / sma_l
             confidence = min(1.0, spread * 20)
             return SignalResult(self.name, SignalDirection.BUY, confidence,
-                                f"Golden cross: SMA{settings.SMA_SHORT} crossed above SMA{settings.SMA_LONG}")
+                                f"Golden cross: SMA{self.setting('SMA_SHORT')} crossed above SMA{self.setting('SMA_LONG')}")
 
         # Death cross: short crosses below long
         if prev_s >= prev_l and sma_s < sma_l:
             spread = abs(sma_l - sma_s) / sma_l
             confidence = min(1.0, spread * 20)
             return SignalResult(self.name, SignalDirection.SELL, confidence,
-                                f"Death cross: SMA{settings.SMA_SHORT} crossed below SMA{settings.SMA_LONG}")
+                                f"Death cross: SMA{self.setting('SMA_SHORT')} crossed below SMA{self.setting('SMA_LONG')}")
 
         # No crossover — mild directional bias
         if sma_s > sma_l:
             spread = (sma_s - sma_l) / sma_l
             return SignalResult(self.name, SignalDirection.BUY, min(0.4, spread * 10),
-                                f"SMA{settings.SMA_SHORT} above SMA{settings.SMA_LONG}")
+                                f"SMA{self.setting('SMA_SHORT')} above SMA{self.setting('SMA_LONG')}")
         elif sma_s < sma_l:
             spread = (sma_l - sma_s) / sma_l
             return SignalResult(self.name, SignalDirection.SELL, min(0.4, spread * 10),
-                                f"SMA{settings.SMA_SHORT} below SMA{settings.SMA_LONG}")
+                                f"SMA{self.setting('SMA_SHORT')} below SMA{self.setting('SMA_LONG')}")
 
         return SignalResult(self.name, SignalDirection.HOLD, 0.0, "SMAs equal")
 
@@ -88,6 +89,8 @@ class SMACrossover(BaseIndicator):
 
 @register
 class EMACrossover(BaseIndicator):
+
+    historical_safe = True
     @property
     def name(self) -> str:
         return "EMA Crossover"
@@ -98,7 +101,7 @@ class EMACrossover(BaseIndicator):
 
     @property
     def lookback(self) -> int:
-        return settings.EMA_LONG
+        return self.setting('EMA_LONG')
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
@@ -106,8 +109,8 @@ class EMACrossover(BaseIndicator):
             df["EMA_short"] = float("nan")
             df["EMA_long"] = float("nan")
             return df
-        df["EMA_short"] = ta.trend.ema_indicator(df["Close"], window=settings.EMA_SHORT)
-        df["EMA_long"] = ta.trend.ema_indicator(df["Close"], window=settings.EMA_LONG)
+        df["EMA_short"] = ta.trend.ema_indicator(df["Close"], window=self.setting('EMA_SHORT'))
+        df["EMA_long"] = ta.trend.ema_indicator(df["Close"], window=self.setting('EMA_LONG'))
         return df
 
     def get_signal(self, df: pd.DataFrame, idx: int = -1) -> SignalResult:
@@ -131,22 +134,22 @@ class EMACrossover(BaseIndicator):
             spread = abs(ema_s - ema_l) / ema_l
             confidence = min(1.0, spread * 25)
             return SignalResult(self.name, SignalDirection.BUY, confidence,
-                                f"EMA{settings.EMA_SHORT} crossed above EMA{settings.EMA_LONG}")
+                                f"EMA{self.setting('EMA_SHORT')} crossed above EMA{self.setting('EMA_LONG')}")
 
         if prev_s >= prev_l and ema_s < ema_l:
             spread = abs(ema_l - ema_s) / ema_l
             confidence = min(1.0, spread * 25)
             return SignalResult(self.name, SignalDirection.SELL, confidence,
-                                f"EMA{settings.EMA_SHORT} crossed below EMA{settings.EMA_LONG}")
+                                f"EMA{self.setting('EMA_SHORT')} crossed below EMA{self.setting('EMA_LONG')}")
 
         if ema_s > ema_l:
             spread = (ema_s - ema_l) / ema_l
             return SignalResult(self.name, SignalDirection.BUY, min(0.4, spread * 12),
-                                f"EMA{settings.EMA_SHORT} above EMA{settings.EMA_LONG}")
+                                f"EMA{self.setting('EMA_SHORT')} above EMA{self.setting('EMA_LONG')}")
         elif ema_s < ema_l:
             spread = (ema_l - ema_s) / ema_l
             return SignalResult(self.name, SignalDirection.SELL, min(0.4, spread * 12),
-                                f"EMA{settings.EMA_SHORT} below EMA{settings.EMA_LONG}")
+                                f"EMA{self.setting('EMA_SHORT')} below EMA{self.setting('EMA_LONG')}")
 
         return SignalResult(self.name, SignalDirection.HOLD, 0.0, "EMAs equal")
 
@@ -160,6 +163,8 @@ class EMACrossover(BaseIndicator):
 
 @register
 class MACD(BaseIndicator):
+
+    historical_safe = True
     @property
     def name(self) -> str:
         return "MACD"
@@ -170,7 +175,7 @@ class MACD(BaseIndicator):
 
     @property
     def lookback(self) -> int:
-        return settings.MACD_SLOW + settings.MACD_SIGNAL
+        return self.setting('MACD_SLOW') + self.setting('MACD_SIGNAL')
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
@@ -181,9 +186,9 @@ class MACD(BaseIndicator):
             return df
         macd_obj = ta.trend.MACD(
             df["Close"],
-            window_slow=settings.MACD_SLOW,
-            window_fast=settings.MACD_FAST,
-            window_sign=settings.MACD_SIGNAL,
+            window_slow=self.setting('MACD_SLOW'),
+            window_fast=self.setting('MACD_FAST'),
+            window_sign=self.setting('MACD_SIGNAL'),
         )
         df["MACD_line"] = macd_obj.macd()
         df["MACD_signal"] = macd_obj.macd_signal()
@@ -247,6 +252,8 @@ class MACD(BaseIndicator):
 
 @register
 class ADX(BaseIndicator):
+
+    historical_safe = True
     @property
     def name(self) -> str:
         return "ADX"
@@ -257,7 +264,7 @@ class ADX(BaseIndicator):
 
     @property
     def lookback(self) -> int:
-        return settings.ADX_PERIOD * 2
+        return self.setting('ADX_PERIOD') * 2
 
     def compute(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
@@ -267,7 +274,7 @@ class ADX(BaseIndicator):
             df["ADX_neg"] = float("nan")
             return df
         adx_obj = ta.trend.ADXIndicator(
-            df["High"], df["Low"], df["Close"], window=settings.ADX_PERIOD
+            df["High"], df["Low"], df["Close"], window=self.setting('ADX_PERIOD')
         )
         df["ADX"] = adx_obj.adx()
         df["ADX_pos"] = adx_obj.adx_pos()
