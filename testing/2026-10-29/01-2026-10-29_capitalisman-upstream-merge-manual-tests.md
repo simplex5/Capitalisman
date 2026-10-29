@@ -3,7 +3,7 @@
 Mark each box `[x]` when the step passed, or paste what you saw under it. Send the file
 back as `01-2026-10-29_capitalisman-upstream-merge-manual-tests_reviewed.md`. Ticket CMAN-D1-021 closes only on your marks.
 
-**Verified against:** de6283f
+**Verified against:** c69e8e6
 **Covers:** backtesting/metrics.py, ui/page_backtest.py, ui/page_predict.py, ui/components.py, ui/page_simulator.py, ui/page_screener.py, indicators/_utils.py, signals/combiner.py, data/fetcher.py, run-timesfm.sh, requirements.txt, CLAUDE.md.ref
 **Branch under test:** develop — this check is only valid on a checkout that carries the
 code (a different branch runs different code; verify after the merge, not before).
@@ -22,7 +22,7 @@ navigation fix, staleness warnings and `run-timesfm.sh`. Nothing was pushed.
       ```
       Inside a Claude session the venv is not active: use `venv/bin/python` instead of `python`.
 - [ ] `git branch --show-current` prints `develop`.
-- [ ] `git log --oneline -1` prints a line starting `2bf8a6a` or a later commit. (No `git pull`:
+- [ ] `git log --oneline -1` prints a line starting `c69e8e6` or a later commit. (No `git pull`:
       the merge is local only and not pushed.)
 
 ---
